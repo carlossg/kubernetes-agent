@@ -5,7 +5,7 @@
 set -e
 
 # Configuration - CUSTOMIZE THESE
-AGENT_URL="${AGENT_URL:-http://localhost:8888}"
+AGENT_URL="${AGENT_URL:-http://localhost:8080}"
 GITHUB_REPO="${GITHUB_REPO:-kdubois/demo-app}"  # Change to your test repo
 NAMESPACE="${NAMESPACE:-argo-rollouts}"
 POD_NAME="${POD_NAME:-demo-app-canary-abc123}"

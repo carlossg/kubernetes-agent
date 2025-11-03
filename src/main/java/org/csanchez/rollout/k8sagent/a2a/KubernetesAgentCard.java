@@ -23,7 +23,7 @@ public class KubernetesAgentCard {
     String url;
 
     @Inject
-    @ConfigProperty(name = "quarkus.http.port", defaultValue = "8888")
+    @ConfigProperty(name = "quarkus.http.port", defaultValue = "8080")
     int serverPort;
     
     @Inject

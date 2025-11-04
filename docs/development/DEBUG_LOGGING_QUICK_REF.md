@@ -8,8 +8,8 @@
 cd kubernetes-agent
 
 mvn google-adk:web \
-  -Dagents=org.csanchez.adk.agents.k8sagent.AgentLoader.INSTANCE \
-  -DloggingLevels=org.csanchez.adk.agents.k8sagent=DEBUG,com.google.adk=DEBUG
+  -Dagents=org.csanchez.rollout.agents.AgentLoader.INSTANCE \
+  -DloggingLevels=org.csanchez.rollout.agents=DEBUG,com.google.adk=DEBUG
 ```
 
 ### Option 2: Use Standalone JAR ✅ (Works Now)
@@ -48,12 +48,12 @@ java -jar target/kubernetes-agent-1.0.0-SNAPSHOT.jar
 ```properties
 logging.level.root=INFO
 logging.level.com.google.adk=DEBUG
-logging.level.org.csanchez.adk.agents.k8sagent=DEBUG
+logging.level.org.csanchez.rollout.agents=DEBUG
 logging.config=classpath:logback-spring.xml
 ```
 
 ### `logback-spring.xml`
-- DEBUG level for `org.csanchez.adk.agents.k8sagent`
+- DEBUG level for `org.csanchez.rollout.agents`
 - DEBUG level for `com.google.adk`
 - Colored console output
 - Reduced noise from Spring and Kubernetes client

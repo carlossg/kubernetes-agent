@@ -31,14 +31,14 @@ cd kubernetes-agent
 
 # Enable DEBUG logging with fork mode
 mvn google-adk:web \
-  -Dagents=org.csanchez.adk.agents.k8sagent.AgentLoader.INSTANCE \
+  -Dagents=org.csanchez.rollout.agents.AgentLoader.INSTANCE \
   -Dfork=true \
-  -DloggingLevels=org.csanchez.adk.agents.k8sagent=DEBUG,com.google.adk=DEBUG
+  -DloggingLevels=org.csanchez.rollout.agents=DEBUG,com.google.adk=DEBUG
 ```
 
 **Output**:
 ```
-20:37:01,735 |-INFO in ch.qos.logback.classic.model.processor.LoggerModelHandler - Setting level of logger [org.csanchez.adk.agents.k8sagent] to DEBUG
+20:37:01,735 |-INFO in ch.qos.logback.classic.model.processor.LoggerModelHandler - Setting level of logger [org.csanchez.rollout.agents] to DEBUG
 2025-10-04T20:37:01.926 DEBUG --- [main] c.google.adk.maven.WebMojo$ForkLauncher : Running with Spring Boot v3.2.0
 2025-10-04T20:37:02.423  INFO --- [main] c.g.adk.web.controller.AgentController  : AgentController initialized with 1 dynamic agents: [kubernetes]
 ```
@@ -47,10 +47,10 @@ mvn google-adk:web \
 
 ```bash
 mvn google-adk:web \
-  -Dagents=org.csanchez.adk.agents.k8sagent.AgentLoader.INSTANCE \
+  -Dagents=org.csanchez.rollout.agents.AgentLoader.INSTANCE \
   -Dfork=true \
   -DjvmArgs="-Xmx2g -Xms512m" \
-  -DloggingLevels=org.csanchez.adk.agents.k8sagent=DEBUG,com.google.adk=DEBUG
+  -DloggingLevels=org.csanchez.rollout.agents=DEBUG,com.google.adk=DEBUG
 ```
 
 ### Configure in pom.xml
@@ -63,10 +63,10 @@ mvn google-adk:web \
             <artifactId>google-adk-maven-plugin</artifactId>
             <version>0.3.1-SNAPSHOT</version>
             <configuration>
-                <agents>org.csanchez.adk.agents.k8sagent.AgentLoader.INSTANCE</agents>
+                <agents>org.csanchez.rollout.agents.AgentLoader.INSTANCE</agents>
                 <fork>true</fork>
                 <jvmArgs>-Xmx2g -Xms512m</jvmArgs>
-                <loggingLevels>org.csanchez.adk.agents.k8sagent=DEBUG,com.google.adk=DEBUG</loggingLevels>
+                <loggingLevels>org.csanchez.rollout.agents=DEBUG,com.google.adk=DEBUG</loggingLevels>
             </configuration>
         </plugin>
     </plugins>
@@ -164,9 +164,9 @@ Maven JVM                    Forked JVM
 
 ```bash
 mvn google-adk:web \
-  -Dagents=org.csanchez.adk.agents.k8sagent.AgentLoader.INSTANCE \
+  -Dagents=org.csanchez.rollout.agents.AgentLoader.INSTANCE \
   -Dfork=true \
-  -DloggingLevels=org.csanchez.adk.agents.k8sagent=DEBUG,com.google.adk=DEBUG
+  -DloggingLevels=org.csanchez.rollout.agents=DEBUG,com.google.adk=DEBUG
 ```
 
 **You'll see**:
@@ -178,7 +178,7 @@ mvn google-adk:web \
 
 ```bash
 mvn google-adk:web \
-  -Dagents=org.csanchez.adk.agents.k8sagent.AgentLoader.INSTANCE \
+  -Dagents=org.csanchez.rollout.agents.AgentLoader.INSTANCE \
   -Dfork=true \
   -DloggingConfig=src/main/resources/logback-dev.xml
 ```
@@ -187,7 +187,7 @@ mvn google-adk:web \
 
 ```bash
 mvn google-adk:web \
-  -Dagents=org.csanchez.adk.agents.k8sagent.AgentLoader.INSTANCE \
+  -Dagents=org.csanchez.rollout.agents.AgentLoader.INSTANCE \
   -Dfork=false
   # Or omit -Dfork (defaults to false)
 ```
@@ -196,10 +196,10 @@ mvn google-adk:web \
 
 ```bash
 mvn google-adk:web \
-  -Dagents=org.csanchez.adk.agents.k8sagent.AgentLoader.INSTANCE \
+  -Dagents=org.csanchez.rollout.agents.AgentLoader.INSTANCE \
   -Dfork=true \
   -DjvmArgs="-Xmx4g -Xms1g -XX:+UseG1GC -XX:MaxGCPauseMillis=200" \
-  -DloggingLevels=org.csanchez.adk.agents.k8sagent=DEBUG
+  -DloggingLevels=org.csanchez.rollout.agents=DEBUG
 ```
 
 ---
@@ -220,7 +220,7 @@ mvn google-adk:web \
 **Verify**:
 1. Fork mode is enabled: Look for `Fork: true` in configuration output
 2. Logging levels are set: Look for `Custom Logging Levels: ...`
-3. Check output for: `Setting level of logger [org.csanchez.adk.agents.k8sagent] to DEBUG`
+3. Check output for: `Setting level of logger [org.csanchez.rollout.agents] to DEBUG`
 
 ### Forked process won't stop
 **Solution**: Press `Ctrl+C` - shutdown hook will kill the forked process automatically

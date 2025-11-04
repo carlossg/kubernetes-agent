@@ -6,7 +6,7 @@ set -e
 
 # Configuration - CUSTOMIZE THESE
 AGENT_URL="${AGENT_URL:-http://localhost:8080}"
-GITHUB_REPO="${GITHUB_REPO:-carlossg/demo-app}"  # Change to your test repo
+GITHUB_REPO="${GITHUB_REPO:-kdubois/demo-app}"  # Change to your test repo
 NAMESPACE="${NAMESPACE:-argo-rollouts}"
 POD_NAME="${POD_NAME:-demo-app-canary-abc123}"
 
@@ -19,7 +19,7 @@ echo ""
 
 # Step 1: Health Check
 echo "1️⃣  Checking agent health..."
-if ! curl -s -f "$AGENT_URL/a2a/health" > /dev/null; then
+if ! curl -s -f "$AGENT_URL/q/health" > /dev/null; then
 	echo "❌ Agent is not responding. Make sure it's running and accessible."
 	echo "   If running in cluster: kubectl port-forward -n argo-rollouts svc/kubernetes-agent 8080:8080"
 	exit 1

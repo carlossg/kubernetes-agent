@@ -1,10 +1,11 @@
 # Kubernetes AI Agent
 
-An autonomous AI agent for Kubernetes debugging and remediation, powered by Google's Agent Development Kit (ADK) and Gemini AI.
+An autonomous AI agent for Kubernetes debugging and remediation, powered by Quarkus LangChain4j and Gemini AI (or alternatively OpenAI).
 
 ## Overview
 
 The Kubernetes Agent is an intelligent system that:
+
 - **Debugs** Kubernetes pods automatically
 - **Analyzes** logs, events, and metrics
 - **Identifies** root causes of issues
@@ -14,6 +15,7 @@ The Kubernetes Agent is an intelligent system that:
 ## Features
 
 ### Kubernetes Debugging Tools
+
 - **Pod Debugging**: Analyze pod status, conditions, and container states
 - **Events**: Retrieve and correlate cluster events
 - **Logs**: Fetch and analyze container logs (including previous crashes)
@@ -21,14 +23,16 @@ The Kubernetes Agent is an intelligent system that:
 - **Resources**: Inspect related deployments, services, and configmaps
 
 ### Remediation Capabilities
+
 - **Git Operations**: Clone, branch, commit, push (using JGit library)
 - **GitHub PRs**: Automatically create pull requests with:
-	- Root cause analysis
-	- Code fixes
-	- Testing recommendations
-	- Links to Kubernetes resources
+    - Root cause analysis
+    - Code fixes
+    - Testing recommendations
+    - Links to Kubernetes resources
 
 ### A2A Communication
+
 - **REST API**: Expose analysis capabilities via HTTP
 - **Integration**: Works with `rollouts-plugin-metric-ai` for canary analysis
 
@@ -39,11 +43,11 @@ Argo Rollouts Analysis
 	↓
 rollouts-plugin-metric-ai
 	↓ (A2A HTTP)
-Kubernetes Agent (ADK)
-	├── K8s Tools (Fabric8 client)
+Kubernetes Agent (Quarkus LangChain4j)
+	├── K8s Tools (Quarkus Kubernetes)
 	├── Git Operations (JGit)
-	├── GitHub PR (GitHub API)
-	└── AI Analysis (Gemini)
+	├── GitHub PR (Quarkus Rest Client)
+	└── AI Analysis (Gemini or OpenAI)
 ```
 
 ## Prerequisites
@@ -51,37 +55,33 @@ Kubernetes Agent (ADK)
 - Java 17+
 - Maven 3.8+
 - Kubernetes cluster
-- Google API Key (Gemini)
+- Google API Key (Gemini) or OpenAI API Key
 - GitHub Personal Access Token
 
 ## Local Development
 
-### 1. Build the project
+### 1. Set environment variables
 
 ```bash
-cd kubernetes-agent
-mvn clean package
-```
-
-### 2. Set environment variables
-
-```bash
+# to use Gemini:
 export GOOGLE_API_KEY="your-google-api-key"
+# to use OpenAI:
+export OPENAI_API_KEY="your-openai-key"
 export GITHUB_TOKEN="your-github-token"
 ```
 
-### 3. Run locally (console mode)
+### 2. Run locally
 
 ```bash
-java -jar target/kubernetes-agent-1.0.0.jar console
-```
-
-### 4. Run as server
-
-```bash
-java -jar target/kubernetes-agent-1.0.0.jar
+mvn quarkus:dev [-Dquarkus.profile=dev,[openai][gemini]]
 # Server starts on port 8080
 # Health check: http://localhost:8080/a2a/health
+```
+
+### 3. Run locally in console mode
+
+```bash
+mvn quarkus:dev [-Dquarkus.profile=dev,[openai][gemini]] -Drun.mode=console
 ```
 
 ## Deployment to Kubernetes
@@ -92,6 +92,15 @@ java -jar target/kubernetes-agent-1.0.0.jar
 docker build -t csanchez/kubernetes-agent:latest .
 docker push csanchez/kubernetes-agent:latest
 ```
+
+Or directly with Quarkus:
+
+```bash
+quarkus image push --also-build
+or
+mvn quarkus:image-push -Dquarkus.container-image.build=true -DquarkusRegistryClient=true
+```
+
 
 ### 2. Create secrets
 
@@ -109,6 +118,14 @@ kubectl apply -f deployment/secret.yaml
 ```bash
 # Update image in deployment/deployment.yaml if needed
 kubectl apply -k deployment/
+```
+
+or directly with quarkus:
+
+```bash
+quarkus deploy
+or
+mvn quarkus:deploy
 ```
 
 ### 4. Verify deployment

@@ -21,18 +21,22 @@ fi
 AGENT_NAMESPACE="argo-rollouts"
 TEST_NAMESPACE="${NAMESPACE:-default}"
 TEST_POD_NAME="${POD_NAME:-test-pod}"
-CONTEXT="${CONTEXT:-kind-rollouts-plugin-metric-ai-test-e2e}"
+CONTEXT="${CONTEXT:-}"  # Use current context if not specified
 LOCAL_URL="${LOCAL_URL:-http://localhost:8080}"
 
 function _kubectl() {
-	kubectl --context "$CONTEXT" -n "$AGENT_NAMESPACE" "$@"
+	if [[ -n "$CONTEXT" ]]; then
+		kubectl --context "$CONTEXT" -n "$AGENT_NAMESPACE" "$@"
+	else
+		kubectl -n "$AGENT_NAMESPACE" "$@"
+	fi
 }
 
 function _curl() {
 	if [[ "$MODE" == "local" ]]; then
-		curl "$@"
+		curl --connect-timeout 5 --max-time 10 "$@"
 	else
-		_kubectl exec deployment/kubernetes-agent -- curl "$@"
+		_kubectl exec deployment/kubernetes-agent -- curl --connect-timeout 5 --max-time 10 "$@"
 	fi
 }
 
@@ -40,6 +44,7 @@ function _get_base_url() {
 	if [[ "$MODE" == "local" ]]; then
 		echo "$LOCAL_URL"
 	else
+		# Use localhost when curling from within the same pod for faster response
 		echo "http://localhost:8080"
 	fi
 }
@@ -49,7 +54,12 @@ echo "📍 Mode: $MODE"
 if [[ "$MODE" == "local" ]]; then
 	echo "🔗 URL: $LOCAL_URL"
 else
-	echo "☸️  Context: $CONTEXT"
+	if [[ -n "$CONTEXT" ]]; then
+		echo "☸️  Context: $CONTEXT"
+	else
+		CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || echo "default")
+		echo "☸️  Context: $CURRENT_CONTEXT (current)"
+	fi
 	echo "📦 Namespace: $AGENT_NAMESPACE"
 fi
 echo ""
@@ -57,11 +67,15 @@ echo ""
 # Test 1: Health Check
 echo "1️⃣  Testing health endpoint..."
 BASE_URL=$(_get_base_url)
-health_url="$BASE_URL/a2a/health"
+health_url="$BASE_URL/q/health"
 if ! HEALTH_RESPONSE=$(_curl -sf "$health_url"); then
-	echo "❌ Health check failed. Agent may not be ready."
+	echo "❌ Health check failed ($health_url). Agent may not be ready."
 	if [[ "$MODE" == "k8s" ]]; then
-		echo "   Check agent logs: kubectl logs --context $CONTEXT -n $AGENT_NAMESPACE deployment/kubernetes-agent"
+		if [[ -n "$CONTEXT" ]]; then
+			echo "   Check agent logs: kubectl logs --context $CONTEXT -n $AGENT_NAMESPACE deployment/kubernetes-agent"
+		else
+			echo "   Check agent logs: kubectl logs -n $AGENT_NAMESPACE deployment/kubernetes-agent"
+		fi
 	else
 		echo "   Check if agent is running on $health_url"
 	fi
@@ -111,9 +125,13 @@ else
 	if ! ANALYSIS_RESPONSE=$(_kubectl exec deployment/kubernetes-agent -- sh -c "curl -sSf -X POST \
 		-H 'Content-Type: application/json' \
 		-d '$REQUEST_PAYLOAD' \
-		http://localhost:8080/a2a/analyze"); then
+		$BASE_URL/a2a/analyze"); then
 		echo "❌ Request failed. Agent may be unresponsive or rate limited."
-		echo "   Check agent logs: kubectl logs --context $CONTEXT -n $AGENT_NAMESPACE deployment/kubernetes-agent"
+		if [[ -n "$CONTEXT" ]]; then
+			echo "   Check agent logs: kubectl logs --context $CONTEXT -n $AGENT_NAMESPACE deployment/kubernetes-agent"
+		else
+			echo "   Check agent logs: kubectl logs -n $AGENT_NAMESPACE deployment/kubernetes-agent"
+		fi
 		exit 1
 	fi
 fi

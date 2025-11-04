@@ -83,7 +83,7 @@ Instead of calling `SpringApplication.run()` directly, fork a new Java process:
 ProcessBuilder pb = new ProcessBuilder(
     "java",
     "-jar", projectJar,
-    "--logging.level.org.csanchez.adk.agents.k8sagent=DEBUG",
+    "--logging.level.org.csanchez.rollout.agents=DEBUG",
     "--logging.level.com.google.adk=DEBUG"
 );
 pb.inheritIO();
@@ -101,7 +101,7 @@ In `WebMojo.java`, after Spring Boot starts, programmatically reconfigure logbac
 LoggerContext loggerContext = (LoggerContext) LoggerFactory.getILoggerFactory();
 loggerContext.reset();
 // Apply custom configuration
-Logger logger = loggerContext.getLogger("org.csanchez.adk.agents.k8sagent");
+Logger logger = loggerContext.getLogger("org.csanchez.rollout.agents");
 logger.setLevel(Level.DEBUG);
 ```
 
@@ -196,8 +196,8 @@ java -jar target/kubernetes-agent-1.0.0-SNAPSHOT.jar
 ### Maven Plugin (Doesn't Work for DEBUG Logs) ❌
 ```bash
 mvn google-adk:web \
-  -Dagents=org.csanchez.adk.agents.k8sagent.AgentLoader.INSTANCE \
-  -DloggingLevels=org.csanchez.adk.agents.k8sagent=DEBUG,com.google.adk=DEBUG
+  -Dagents=org.csanchez.rollout.agents.AgentLoader.INSTANCE \
+  -DloggingLevels=org.csanchez.rollout.agents=DEBUG,com.google.adk=DEBUG
 # Configuration is read but DEBUG logs don't appear
 # Access Web UI at http://localhost:8000
 ```

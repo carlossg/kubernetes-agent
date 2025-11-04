@@ -30,12 +30,12 @@ The debug logging is configured in:
 1. **`src/main/resources/application.properties`**:
    ```properties
    logging.level.com.google.adk=DEBUG
-   logging.level.org.csanchez.adk.agents.k8sagent=DEBUG
+   logging.level.org.csanchez.rollout.agents=DEBUG
    logging.config=classpath:logback-spring.xml
    ```
 
 2. **`src/main/resources/logback-spring.xml`**:
-   - DEBUG level for `org.csanchez.adk.agents.k8sagent`
+   - DEBUG level for `org.csanchez.rollout.agents`
    - DEBUG level for `com.google.adk`
    - Colored console output
    - Reduced noise from Spring and Kubernetes client

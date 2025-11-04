@@ -2,7 +2,8 @@ package org.csanchez.rollout.k8sagent.remediation;
 
 import dev.langchain4j.agent.tool.Tool;
 import jakarta.enterprise.context.ApplicationScoped;
-import org.kohsuke.github.*;
+import jakarta.inject.Inject;
+import org.eclipse.microprofile.rest.client.inject.RestClient;
 
 import io.quarkus.logging.Log;
 
@@ -18,16 +19,18 @@ import java.util.Map;
 public class GitHubPRTool {
     
     private final GitOperations gitOps;
-    private final GitHub github;
+    private final String githubToken;
     
-    public GitHubPRTool() throws Exception {
+    @Inject
+    @RestClient
+    GitHubRestClient githubClient;
+    
+    public GitHubPRTool() {
         this.gitOps = new GitOperations();
-        String token = System.getenv("GITHUB_TOKEN");
-        if (token == null || token.isEmpty()) {
+        this.githubToken = System.getenv("GITHUB_TOKEN");
+        if (githubToken == null || githubToken.isEmpty()) {
             Log.warn("GITHUB_TOKEN environment variable not set");
-            this.github = null;
         } else {
-            this.github = new GitHubBuilder().withOAuthToken(token).build();
             Log.info("GitHub PR tool initialized");
         }
     }
@@ -56,7 +59,7 @@ public class GitHubPRTool {
     ) {
         Log.info("=== Executing Tool: createGitHubPR ===");
         
-        if (github == null) {
+        if (githubToken == null || githubToken.isEmpty()) {
             return Map.of("success", false, "error", "GITHUB_TOKEN environment variable is required");
         }
         
@@ -85,27 +88,33 @@ public class GitHubPRTool {
             String commitMsg = MessageFormat.format("fix: {0}", fixDescription);
             gitOps.commitAndPush(repoPath, commitMsg, token);
             
-            // 5. Create PR via GitHub API (library)
-            String repoName = extractRepoName(repoUrl);
-            GHRepository repo = github.getRepository(repoName);
+            // 5. Create PR via GitHub REST API
+            String[] ownerRepo = extractOwnerAndRepo(repoUrl);
+            String owner = ownerRepo[0];
+            String repo = ownerRepo[1];
+            String authHeader = "Bearer " + githubToken;
             
-            String baseBranch = repo.getDefaultBranch();
+            // Get repository to find default branch
+            GitHubRestClient.GitHubRepository repository =
+                githubClient.getRepository(owner, repo, authHeader);
+            
+            String baseBranch = repository.default_branch();
             String prTitle = MessageFormat.format("Fix: {0}", fixDescription);
             String prBody = generatePRBody(rootCause, fixDescription, testingRecommendations, namespace, podName, fileChanges);
             
-            GHPullRequest pr = repo.createPullRequest(
-                prTitle,
-                branchName,
-                baseBranch,
-                prBody
-            );
-            Log.info(MessageFormat.format("Successfully created PR: {0}", pr.getHtmlUrl()));
+            // Create pull request
+            GitHubRestClient.CreatePullRequestRequest prRequest =
+                new GitHubRestClient.CreatePullRequestRequest(prTitle, branchName, baseBranch, prBody);
             
+            GitHubRestClient.GitHubPullRequest pr =
+                githubClient.createPullRequest(owner, repo, authHeader, prRequest);
+            
+            Log.info(MessageFormat.format("Successfully created PR: {0}", pr.html_url()));
             
             return Map.of(
                 "success", true,
-                "prUrl", pr.getHtmlUrl().toString(),
-                "prNumber", pr.getNumber(),
+                "prUrl", pr.html_url(),
+                "prNumber", pr.number(),
                 "branch", branchName
             );
             
@@ -124,13 +133,14 @@ public class GitHubPRTool {
     }
     
     /**
-     * Extract repository name from URL (e.g., "owner/repo")
+     * Extract owner and repository name from URL
+     * @return Array with [owner, repo]
      */
-    private String extractRepoName(String repoUrl) {
+    private String[] extractOwnerAndRepo(String repoUrl) {
         // Handle formats: https://github.com/owner/repo or https://github.com/owner/repo.git
         String cleaned = repoUrl.replace("https://github.com/", "")
             .replace(".git", "");
-        return cleaned;
+        return cleaned.split("/", 2);
     }
     
     /**

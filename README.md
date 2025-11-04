@@ -46,7 +46,7 @@ rollouts-plugin-metric-ai
 Kubernetes Agent (Quarkus LangChain4j)
 	├── K8s Tools (Quarkus Kubernetes)
 	├── Git Operations (JGit)
-	├── GitHub PR ()
+	├── GitHub PR (Quarkus Rest Client)
 	└── AI Analysis (Gemini or OpenAI)
 ```
 
@@ -66,7 +66,7 @@ Kubernetes Agent (Quarkus LangChain4j)
 # to use Gemini:
 export GOOGLE_API_KEY="your-google-api-key"
 # to use OpenAI:
-export OPENAI_API_KEY="your openai key"
+export OPENAI_API_KEY="your-openai-key"
 export GITHUB_TOKEN="your-github-token"
 ```
 
@@ -78,7 +78,7 @@ mvn quarkus:dev [-Dquarkus.profile=dev,[openai][gemini]]
 # Health check: http://localhost:8080/a2a/health
 ```
 
-### 4. Run locally in console mode
+### 3. Run locally in console mode
 
 ```bash
 mvn quarkus:dev [-Dquarkus.profile=dev,[openai][gemini]] -Drun.mode=console

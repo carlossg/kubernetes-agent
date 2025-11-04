@@ -117,7 +117,7 @@ The profile-specific configurations are defined in [`application.properties`](..
 ### Model Settings
 
 #### Gemini Configuration
-- Model: `gemini-2.0-flash-exp`
+- Model: `gemini-2.5-flash`
 - Timeout: 60 seconds
 - Request/Response logging: Enabled
 
@@ -154,7 +154,7 @@ echo $QUARKUS_PROFILE
 
 - Ensure the model name in your configuration matches available models
 - For OpenAI: Check that your API key has access to the specified model
-- For Gemini: Verify the model name is correct (e.g., `gemini-2.0-flash-exp`)
+- For Gemini: Verify the model name is correct (e.g., `gemini-2.5-flash`)
 
 ## Additional Resources
 

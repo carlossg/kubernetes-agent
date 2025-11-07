@@ -1,0 +1,11 @@
+# Ignore everything except source code and build files
+*
+
+# Allow source code
+!src/main/
+!pom.xml
+
+# Allow Maven wrapper if present
+!.mvn/
+!mvnw
+!mvnw.cmd

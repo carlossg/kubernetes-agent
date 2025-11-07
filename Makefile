@@ -1,6 +1,7 @@
-.PHONY: build test clean docker-build docker-push deploy
+.PHONY: build test clean docker-build docker-push deploy docker-buildx docker-buildx-push
 
 IMAGE ?= csanchez/kubernetes-agent:latest
+PLATFORMS ?= linux/amd64,linux/arm64
 
 CONTEXT ?= $(shell kubectl config current-context)
 
@@ -15,6 +16,14 @@ clean:
 
 docker-build:
 	docker build -t $(IMAGE) .
+
+docker-buildx:
+	docker buildx create --name multiarch --use || docker buildx use multiarch
+	docker buildx build --platform $(PLATFORMS) --provenance=false -t $(IMAGE) --load .
+
+docker-buildx-push:
+	docker buildx create --name multiarch --use || docker buildx use multiarch
+	docker buildx build --platform $(PLATFORMS) --provenance=false -t $(IMAGE) --push .
 
 docker-push:
 	docker push $(IMAGE)

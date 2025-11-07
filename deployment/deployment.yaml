@@ -18,7 +18,6 @@ spec:
       containers:
         - name: agent
           image: csanchez/kubernetes-agent:latest
-          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
               name: http
@@ -51,22 +50,6 @@ spec:
             limits:
               memory: "2Gi"
               cpu: "1000m"
-          livenessProbe:
-            httpGet:
-              path: /a2a/health
-              port: http
-            initialDelaySeconds: 30
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-          readinessProbe:
-            httpGet:
-              path: /a2a/health
-              port: http
-            initialDelaySeconds: 10
-            periodSeconds: 5
-            timeoutSeconds: 3
-            failureThreshold: 3
       restartPolicy: Always
 
 

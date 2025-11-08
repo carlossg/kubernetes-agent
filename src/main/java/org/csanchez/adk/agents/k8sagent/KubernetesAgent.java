@@ -30,7 +30,7 @@ import java.util.Scanner;
 public class KubernetesAgent {
 	
 	private static final Logger logger = LoggerFactory.getLogger(KubernetesAgent.class);
-	private static final String MODEL_NAME = "gemini-2.0-flash-exp";
+	private static final String MODEL_NAME = System.getenv().getOrDefault("GEMINI_MODEL", "gemini-2.5-flash");
 	private static final String AGENT_NAME = "KubernetesAgent";
 	private static final String USER_ID = "argo-rollouts";
 	
@@ -80,7 +80,7 @@ public class KubernetesAgent {
 	
 	public static BaseAgent initAgent() {
 		try {
-			logger.info("Initializing Kubernetes AI Agent");
+			logger.info("Initializing Kubernetes AI Agent with model: {}", MODEL_NAME);
 			
 			// Kubernetes Tools - use FunctionTool.create() like cloud-run
 			List<BaseTool> allTools = new ArrayList<>();
@@ -104,7 +104,7 @@ public class KubernetesAgent {
 			
 			// Google Search for known issues
 			LlmAgent searchAgent = LlmAgent.builder()
-				.model("gemini-2.0-flash-exp")
+				.model(MODEL_NAME)
 				.name("search_agent")
 				.description("Search Google for known issues")
 				.instruction("You're a specialist in searching for known Kubernetes and software issues")

@@ -43,6 +43,8 @@ spec:
               value: "kubernetes-agent"
             - name: GIT_EMAIL
               value: "kubernetes-agent@csanchez.org"
+            - name: GEMINI_MODEL
+              value: "gemini-2.5-flash"
           resources:
             requests:
               memory: "512Mi"

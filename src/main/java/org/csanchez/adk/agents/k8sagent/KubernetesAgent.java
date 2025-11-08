@@ -154,12 +154,12 @@ public class KubernetesAgent {
 						 - PR link (if created)
 						 - Recommendations for prevention
 					
-					Always gather data systematically before making conclusions.
-					Be thorough but concise in your analysis.
-				""")
-				.tools(allTools.toArray(new BaseTool[0]))
-				.outputKey("k8s_agent_result")
-				.build();
+				Always gather data systematically before making conclusions.
+				Be thorough but concise in your analysis.
+			""")
+			.tools((Object[]) allTools.toArray(new BaseTool[0]))
+			.outputKey("k8s_agent_result")
+			.build();
 			
 			logger.info("Kubernetes AI Agent initialized successfully");
 			return agent;

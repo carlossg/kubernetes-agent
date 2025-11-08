@@ -1,7 +1,10 @@
 package org.csanchez.adk.agents.k8sagent.a2a;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.adk.agents.LlmAgent;
 import com.google.adk.events.Event;
 import com.google.adk.runner.InMemoryRunner;
+import com.google.genai.types.Schema;
 import org.csanchez.adk.agents.k8sagent.KubernetesAgent;
 import org.csanchez.adk.agents.k8sagent.utils.RetryHelper;
 import com.google.adk.sessions.Session;
@@ -16,7 +19,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -28,8 +30,55 @@ import java.util.Map;
 public class A2AController {
 	
 	private static final Logger logger = LoggerFactory.getLogger(A2AController.class);
+	private static final ObjectMapper objectMapper = new ObjectMapper();
 	
 	private final InMemoryRunner runner;
+	
+	// JSON Schema for A2AResponse - ensures structured output
+	// Using string format since direct Type enum access may not be available
+	private static final Schema A2A_RESPONSE_SCHEMA = createResponseSchema();
+	
+	private static Schema createResponseSchema() {
+		try {
+			// Build schema using JSON representation
+			return Schema.fromJson("""
+				{
+					"type": "object",
+					"properties": {
+						"analysis": {
+							"type": "string",
+							"description": "Detailed analysis of the canary deployment"
+						},
+						"rootCause": {
+							"type": "string",
+							"description": "Identified root cause of any issues"
+						},
+						"remediation": {
+							"type": "string",
+							"description": "Suggested remediation steps"
+						},
+						"prLink": {
+							"type": "string",
+							"description": "GitHub PR link if a fix was created (optional)",
+							"nullable": true
+						},
+						"promote": {
+							"type": "boolean",
+							"description": "Whether to promote the canary deployment (true) or abort (false)"
+						},
+						"confidence": {
+							"type": "integer",
+							"description": "Confidence level in the analysis (0-100)"
+						}
+					},
+					"required": ["analysis", "rootCause", "remediation", "promote", "confidence"]
+				}
+				""");
+		} catch (Exception e) {
+			logger.error("Failed to create response schema", e);
+			return Schema.builder().build();
+		}
+	}
 	
 	/**
 	 * Constructor with dependency injection for testability
@@ -60,10 +109,23 @@ public class A2AController {
 		logger.info("Received A2A analysis request from user: {}", request.getUserId());
 		
 		try {
+			// Get model name from the environment variable (same as root agent)
+			String modelName = System.getenv().getOrDefault("GEMINI_MODEL", "gemini-2.5-flash");
+			
+			// Create dedicated agent with structured output schema
+			LlmAgent analysisAgent = LlmAgent.builder()
+				.name("a2a-analysis")
+				.model(modelName)
+				.instruction("You are a Kubernetes SRE analyzing canary deployments. Provide structured analysis.")
+				.outputSchema(A2A_RESPONSE_SCHEMA)
+				.build();
+			
+			// Create runner with analysis agent
+			InMemoryRunner analysisRunner = new InMemoryRunner(analysisAgent);
+			
 			// Create session for this analysis
-			String sessionId = "a2a-" + System.currentTimeMillis();
-			Session session = runner.sessionService()
-				.createSession("KubernetesAgent", request.getUserId())
+			Session session = analysisRunner.sessionService()
+				.createSession("a2a-analysis", request.getUserId())
 				.blockingGet();
 			
 			// Build prompt with context
@@ -73,7 +135,7 @@ public class A2AController {
 			// Invoke agent with retry logic for 429 errors
 			Content userMsg = Content.fromParts(Part.fromText(prompt));
 			List<String> responses = RetryHelper.executeWithRetry(() -> {
-				Flowable<Event> events = runner.runAsync(
+				Flowable<Event> events = analysisRunner.runAsync(
 					request.getUserId(),
 					session.id(),
 					userMsg
@@ -92,11 +154,14 @@ public class A2AController {
 				return eventResponses;
 			}, "Gemini API analysis");
 			
-			// Parse response
+			// Parse JSON response
 			String fullResponse = String.join("\n", responses);
-			A2AResponse response = parseResponse(fullResponse, request.getContext());
+			A2AResponse response = parseJsonResponse(fullResponse);
 			
-			logger.info("A2A analysis completed successfully: {}", fullResponse);
+			logger.info("A2A analysis completed successfully");
+			logger.debug("Analysis result: promote={}, confidence={}", 
+				response.isPromote(), response.getConfidence());
+			
 			return ResponseEntity.ok(response);
 			
 		} catch (Exception e) {
@@ -134,67 +199,50 @@ public class A2AController {
 			});
 		}
 		
-		prompt.append("\nPlease analyze the canary deployment and provide:\n");
-		prompt.append("1. Root cause of any issues\n");
-		prompt.append("2. Whether to promote the canary (true/false)\n");
-		prompt.append("3. Confidence level (0-100)\n");
-		prompt.append("4. Remediation steps if needed\n");
+		prompt.append("\nYou have access to Kubernetes tools. Use them to gather information:\n");
+		prompt.append("1. Use get_pod_logs to fetch pod logs for analysis\n");
+		prompt.append("2. Use get_kubernetes_events to see recent events\n");
+		prompt.append("3. Use debug_kubernetes_pod to check pod status\n");
+		prompt.append("4. Compare stable vs canary pod behavior\n");
+		prompt.append("\nProvide a structured response with:\n");
+		prompt.append("- analysis: Detailed analysis text\n");
+		prompt.append("- rootCause: Identified root cause\n");
+		prompt.append("- remediation: Suggested remediation steps\n");
+		prompt.append("- prLink: GitHub PR link if applicable (can be null)\n");
+		prompt.append("- promote: true to promote canary, false to abort\n");
+		prompt.append("- confidence: Confidence level 0-100\n");
 		
 		return prompt.toString();
 	}
 	
 	/**
-	 * Parse agent response into A2AResponse
+	 * Parse JSON response from the agent into A2AResponse
+	 * With structured output, this is a simple JSON parse
 	 */
-	private A2AResponse parseResponse(String fullResponse, Map<String, Object> context) {
-		A2AResponse response = new A2AResponse();
-		
-		// Simple parsing - in production, this would be more sophisticated
-		response.setAnalysis(fullResponse);
-		
-		// Try to extract structured data
-		boolean promote = !fullResponse.toLowerCase().contains("do not promote") &&
-			!fullResponse.toLowerCase().contains("abort") &&
-			!fullResponse.toLowerCase().contains("rollback");
-		
-		response.setPromote(promote);
-		
-		// Extract root cause (look for common patterns)
-		String rootCause = extractSection(fullResponse, "root cause");
-		response.setRootCause(rootCause != null ? rootCause : "See analysis");
-		
-		// Extract remediation
-		String remediation = extractSection(fullResponse, "remediation");
-		response.setRemediation(remediation != null ? remediation : "See analysis");
-		
-		// Set confidence (would be extracted from agent response in production)
-		response.setConfidence(promote ? 80 : 50);
-		
-		return response;
-	}
-	
-	/**
-	 * Extract a section from the response by looking for headers
-	 */
-	private String extractSection(String text, String sectionName) {
-		String lowerText = text.toLowerCase();
-		String lowerSection = sectionName.toLowerCase();
-		
-		int start = lowerText.indexOf(lowerSection);
-		if (start == -1) {
-			return null;
-		}
-		
-		// Find the end (next section or end of text)
-		int end = text.length();
-		for (String marker : List.of("\n## ", "\n# ", "\n\n## ")) {
-			int markerPos = text.indexOf(marker, start + sectionName.length());
-			if (markerPos != -1 && markerPos < end) {
-				end = markerPos;
+	private A2AResponse parseJsonResponse(String jsonResponse) {
+		try {
+			// Parse the JSON response directly
+			A2AResponse response = objectMapper.readValue(jsonResponse, A2AResponse.class);
+			
+			// Ensure prLink is not empty string (set to null)
+			if (response.getPrLink() != null && response.getPrLink().trim().isEmpty()) {
+				response.setPrLink(null);
 			}
+			
+			return response;
+		} catch (Exception e) {
+			logger.error("Failed to parse JSON response: {}", jsonResponse, e);
+			
+			// Fallback response
+			A2AResponse fallback = new A2AResponse();
+			fallback.setAnalysis(jsonResponse);
+			fallback.setRootCause("Unable to parse structured response");
+			fallback.setRemediation("Manual review required");
+			fallback.setPromote(true); // Safe default
+			fallback.setConfidence(0);
+			
+			return fallback;
 		}
-		
-		return text.substring(start, end).trim();
 	}
 }
 

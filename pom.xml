@@ -135,7 +135,7 @@
 				<artifactId>spring-boot-maven-plugin</artifactId>
 				<version>${spring.boot.version}</version>
 				<configuration>
-					<mainClass>com.google.adk.web.AdkWebServer</mainClass>
+					<mainClass>org.csanchez.adk.agents.k8sagent.KubernetesAgentApplication</mainClass>
 				</configuration>
 				<executions>
 					<execution>

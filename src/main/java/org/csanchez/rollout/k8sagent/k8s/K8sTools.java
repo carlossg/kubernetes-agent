@@ -1,5 +1,6 @@
 package org.csanchez.rollout.k8sagent.k8s;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.Tool;
 import io.fabric8.kubernetes.api.model.*;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
@@ -432,31 +433,14 @@ public class K8sTools {
             // Log detailed information about what was found
             Log.info("Successfully inspected resources");
             
-            if (result.containsKey("pods")) {
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> podsList = (List<Map<String, Object>>) result.get("pods");
-                Log.info(MessageFormat.format("Found {0} pods with labelSelector: {1}",
-                    podsList.size(), labelSelector != null ? labelSelector : "none"));
-                
-                // Log pod details to help track if same pods are being returned
-                for (Map<String, Object> pod : podsList) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> labels = (Map<String, Object>) pod.get("labels");
-                    Log.info(MessageFormat.format("  - Pod: {0}, Phase: {1}, Labels: {2}",
-                        pod.get("name"), pod.get("phase"), labels));
-                }
-            }
-            
-            if (result.containsKey("deployments")) {
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> deploymentsList = (List<Map<String, Object>>) result.get("deployments");
-                Log.info(MessageFormat.format("Found {0} deployments", deploymentsList.size()));
-            }
-            
-            if (result.containsKey("services")) {
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> servicesList = (List<Map<String, Object>>) result.get("services");
-                Log.info(MessageFormat.format("Found {0} services", servicesList.size()));
+
+            try {
+                ObjectMapper mapper = new ObjectMapper();
+                String jsonResult = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result);
+                Log.info("Full result as JSON:\n" + jsonResult);
+            } catch (Exception jsonException) {
+                Log.error("Error serializing result to JSON", jsonException);
+                Log.info("Result object: " + result);
             }
             
             return result;

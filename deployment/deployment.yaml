@@ -17,7 +17,7 @@ spec:
       serviceAccountName: kubernetes-agent
       containers:
         - name: agent
-          image: csanchez/kubernetes-agent:latest
+          image: ghcr.io/carlossg/kubernetes-agent:latest
           ports:
             - containerPort: 8080
               name: http

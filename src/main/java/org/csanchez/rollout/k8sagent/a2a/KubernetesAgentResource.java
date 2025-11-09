@@ -87,11 +87,8 @@ public class KubernetesAgentResource {
             });
         }
 
-        prompt.append("\nYou have access to Kubernetes tools. Use them to gather information:\n");
-        prompt.append("1. Use get_pod_logs to fetch pod logs for analysis\n");
-        prompt.append("2. Use get_kubernetes_events to see recent events\n");
-        prompt.append("3. Use debug_kubernetes_pod to check pod status\n");
-        prompt.append("4. Compare stable vs canary pod behavior\n");
+        prompt.append("\nIMPORTANT: Gather data efficiently (max 5-7 tool calls), then provide analysis.\n");
+        prompt.append("Do NOT re-check the same resources multiple times.\n");
         prompt.append("\nProvide a structured response with:\n");
         prompt.append("- analysis: Detailed analysis text\n");
         prompt.append("- rootCause: Identified root cause\n");

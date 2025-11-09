@@ -119,6 +119,7 @@ public class KubernetesAgent {
 		try {
 			// Kubernetes Tools - use FunctionTool.create() like cloud-run
 			List<BaseTool> allTools = new ArrayList<>();
+			allTools.add(FunctionTool.create(K8sTools.class, "listPods"));
 			allTools.add(FunctionTool.create(K8sTools.class, "debugPod"));
 			allTools.add(FunctionTool.create(K8sTools.class, "getEvents"));
 			allTools.add(FunctionTool.create(K8sTools.class, "getLogs"));
@@ -181,6 +182,7 @@ public class KubernetesAgent {
 											Your workflow:
 											1. Analyze the problem description and identify the failing pod/service
 											2. Gather comprehensive diagnostic data:
+												 - List pods by label selector (use list_pods with labelSelector like 'role=stable' or 'role=canary')
 												 - Pod status and conditions (use debug_kubernetes_pod)
 												 - Recent events (use get_kubernetes_events)
 												 - Container logs (use get_pod_logs, include previous=true if crashed)

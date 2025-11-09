@@ -121,8 +121,75 @@ public class K8sTools {
 			return debugInfo;
 
 		} catch (Exception e) {
-			logger.error("Error debugging pod", e);
-			return Map.of("error", e.getMessage());
+			// Log message only for common errors (no stack trace)
+			String errorMsg = e.getMessage();
+			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound"))) {
+				logger.warn("Error debugging pod: {}", errorMsg);
+			} else {
+				logger.error("Error debugging pod", e);
+			}
+			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
+		}
+	}
+
+	// ==================== LIST PODS ====================
+
+	public static Map<String, Object> listPods(
+			@Schema(name = "namespace", description = "The Kubernetes namespace") String namespace,
+			@Schema(name = "labelSelector", description = "Label selector to filter pods (e.g., 'role=stable' or 'role=canary')") String labelSelector) {
+		logger.info("=== Executing Tool: listPods ===");
+
+		if (namespace == null || labelSelector == null) {
+			return Map.of("error", "namespace and labelSelector are required");
+		}
+
+		logger.info("Listing pods in namespace: {} with selector: {}", namespace, labelSelector);
+
+		try {
+			List<Pod> pods = k8sClient.pods()
+					.inNamespace(namespace)
+					.withLabel(labelSelector)
+					.list()
+					.getItems();
+
+			List<Map<String, Object>> podList = pods.stream()
+					.map(pod -> {
+						Map<String, Object> podInfo = new HashMap<>();
+						podInfo.put("name", pod.getMetadata().getName());
+						podInfo.put("phase", pod.getStatus().getPhase());
+						podInfo.put("labels", pod.getMetadata().getLabels());
+						podInfo.put("ready", pod.getStatus().getConditions().stream()
+								.filter(c -> "Ready".equals(c.getType()))
+								.findFirst()
+								.map(c -> "True".equals(c.getStatus()))
+								.orElse(false));
+						podInfo.put("restartCount", pod.getStatus().getContainerStatuses() != null
+								? pod.getStatus().getContainerStatuses().stream()
+										.mapToInt(ContainerStatus::getRestartCount)
+										.sum()
+								: 0);
+						return podInfo;
+					})
+					.collect(Collectors.toList());
+
+			logger.info("Found {} pods matching selector: {}", podList.size(), labelSelector);
+
+			return Map.of(
+					"namespace", namespace,
+					"labelSelector", labelSelector,
+					"podCount", podList.size(),
+					"pods", podList);
+
+		} catch (Exception e) {
+			// Log message only for common errors (no stack trace)
+			String errorMsg = e.getMessage();
+			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound")
+					|| errorMsg.contains("Unauthorized"))) {
+				logger.warn("Error listing pods: {}", errorMsg);
+			} else {
+				logger.error("Error listing pods", e);
+			}
+			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
 		}
 	}
 
@@ -192,8 +259,15 @@ public class K8sTools {
 					"events", eventList);
 
 		} catch (Exception e) {
-			logger.error("Error getting events", e);
-			return Map.of("error", e.getMessage());
+			// Log message only for common errors (no stack trace)
+			String errorMsg = e.getMessage();
+			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound")
+					|| errorMsg.contains("Unauthorized"))) {
+				logger.warn("Error getting events: {}", errorMsg);
+			} else {
+				logger.error("Error getting events", e);
+			}
+			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
 		}
 	}
 
@@ -251,8 +325,14 @@ public class K8sTools {
 					"logs", logs);
 
 		} catch (Exception e) {
-			logger.error("Error getting logs", e);
-			return Map.of("error", e.getMessage());
+			// Log message only for common errors (no stack trace)
+			String errorMsg = e.getMessage();
+			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound"))) {
+				logger.warn("Error getting logs: {}", errorMsg);
+			} else {
+				logger.error("Error getting logs", e);
+			}
+			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
 		}
 	}
 
@@ -298,8 +378,15 @@ public class K8sTools {
 					"containers", containerMetrics);
 
 		} catch (Exception e) {
-			logger.error("Error getting metrics", e);
-			return Map.of("error", e.getMessage());
+			// Log message only for common errors (no stack trace)
+			String errorMsg = e.getMessage();
+			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound")
+					|| errorMsg.contains("not available"))) {
+				logger.warn("Error getting metrics: {}", errorMsg);
+			} else {
+				logger.error("Error getting metrics", e);
+			}
+			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
 		}
 	}
 
@@ -387,8 +474,15 @@ public class K8sTools {
 			return result;
 
 		} catch (Exception e) {
-			logger.error("Error inspecting resources", e);
-			return Map.of("error", e.getMessage());
+			// Log message only for common errors (no stack trace)
+			String errorMsg = e.getMessage();
+			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound")
+					|| errorMsg.contains("Unauthorized"))) {
+				logger.warn("Error inspecting resources: {}", errorMsg);
+			} else {
+				logger.error("Error inspecting resources", e);
+			}
+			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
 		}
 	}
 }

@@ -31,43 +31,61 @@ public class KubernetesAgentResource {
     /**
      * Main analyze endpoint
      */
-    @POST
-    @Path("/analyze")
-    @Consumes(MediaType.APPLICATION_JSON)
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response analyze(KubernetesAgentRequest request) {
-        Log.info(MessageFormat.format("Received analysis request from user: {0}", request.userId()));
-        
-        try {
-            // Build prompt with context
-            String prompt = buildPrompt(request);
-            Log.debug(MessageFormat.format("Built prompt: {0}", prompt));
-            
-            // Execute analysis using the KubernetesAgent
-            String analysisResult = kubernetesAgent.chat(prompt);
-            
-            // Parse response
-            KubernetesAgentResponse response = responseParser.parse(analysisResult);
-            Log.info("Analysis completed successfully");
-            return Response.ok(response).build();
-            
-        } catch (Exception e) {
-            Log.error(MessageFormat.format("Error processing request from user: {0}", request.userId()), e);
-            Log.error(MessageFormat.format("Request details - Prompt: {0}", request.prompt()));
-            Log.error(MessageFormat.format("Request details - Context: {0}", request.context()));
-            
-            KubernetesAgentResponse errorResponse = KubernetesAgentResponse.empty()
-                .withAnalysis(MessageFormat.format("Error: {0}", e.getMessage()))
-                .withRootCause("Analysis failed")
-                .withRemediation("Unable to provide remediation")
-                .withPromote(true) // Default to promote on error
-                .withConfidence(0);
-            
-            return Response.status(Status.INTERNAL_SERVER_ERROR)
-                .entity(errorResponse)
-                .build();
-        }
-    }
+	@POST
+	@Path("/analyze")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response analyze(KubernetesAgentRequest request) {
+		Log.info(MessageFormat.format("Received analysis request from user: {0}", request.userId()));
+		
+		try {
+			// Build prompt with context
+			String prompt = buildPrompt(request);
+			Log.debug(MessageFormat.format("Built prompt: {0}", prompt));
+			
+			// Execute analysis using the KubernetesAgent
+			String analysisResult = kubernetesAgent.chat(prompt);
+			
+			// Parse response
+			KubernetesAgentResponse response = responseParser.parse(analysisResult);
+			Log.info("Analysis completed successfully");
+			return Response.ok(response).build();
+			
+		} catch (NullPointerException e) {
+			// Handle Gemini API null response parts issue
+			String errorMsg = "AI model returned an invalid response (null parts). This may indicate an API issue or invalid tool execution.";
+			Log.error(MessageFormat.format("NullPointerException from AI model for user: {0}. {1}", request.userId(), errorMsg), e);
+			Log.error(MessageFormat.format("Request details - Prompt: {0}", request.prompt()));
+			Log.error(MessageFormat.format("Request details - Context: {0}", request.context()));
+			
+			KubernetesAgentResponse errorResponse = KubernetesAgentResponse.empty()
+				.withAnalysis(errorMsg)
+				.withRootCause("AI model API error - invalid response format")
+				.withRemediation("Please retry the analysis. If the issue persists, check the AI model configuration and API status.")
+				.withPromote(true) // Default to promote on error to avoid blocking deployments
+				.withConfidence(0);
+			
+			return Response.status(Status.INTERNAL_SERVER_ERROR)
+				.entity(errorResponse)
+				.build();
+				
+		} catch (Exception e) {
+			Log.error(MessageFormat.format("Error processing request from user: {0}", request.userId()), e);
+			Log.error(MessageFormat.format("Request details - Prompt: {0}", request.prompt()));
+			Log.error(MessageFormat.format("Request details - Context: {0}", request.context()));
+			
+			KubernetesAgentResponse errorResponse = KubernetesAgentResponse.empty()
+				.withAnalysis(MessageFormat.format("Error: {0}", e.getMessage()))
+				.withRootCause("Analysis failed: " + e.getClass().getSimpleName())
+				.withRemediation("Unable to provide remediation due to system error")
+				.withPromote(true) // Default to promote on error
+				.withConfidence(0);
+			
+			return Response.status(Status.INTERNAL_SERVER_ERROR)
+				.entity(errorResponse)
+				.build();
+		}
+	}
     
     /**
      * Build prompt from request

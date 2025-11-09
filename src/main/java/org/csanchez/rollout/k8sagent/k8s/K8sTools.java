@@ -6,6 +6,7 @@ import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.api.model.metrics.v1beta1.PodMetrics;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.quarkus.logging.Log;
+import io.smallrye.common.annotation.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -15,21 +16,23 @@ import java.util.stream.Collectors;
 
 /**
  * Kubernetes tools for LangChain4j
+ * All methods are marked as @Blocking to avoid blocking the event loop
  */
 @ApplicationScoped
 public class K8sTools {
-    
-    @Inject
-    KubernetesClient k8sClient;
-    
-    /**
-     * Debug a Kubernetes pod
-     */
-    @Tool("Debug a Kubernetes pod to get detailed information about its status and conditions")
-    public Map<String, Object> debugPod(
-            String namespace,
-            String podName
-    ) {
+	
+	@Inject
+	KubernetesClient k8sClient;
+	
+	/**
+	 * Debug a Kubernetes pod
+	 */
+	@Tool("Debug a Kubernetes pod to get detailed information about its status and conditions")
+	@Blocking
+	public Map<String, Object> debugPod(
+			String namespace,
+			String podName
+	) {
         Log.info("=== Executing Tool: debugPod ===");
         
         if (namespace == null || podName == null) {
@@ -131,15 +134,16 @@ public class K8sTools {
         }
     }
     
-    /**
-     * Get Kubernetes events
-     */
-    @Tool("Get Kubernetes events for a namespace or specific pod")
-    public Map<String, Object> getEvents(
-            String namespace,
-            String podName,
-            Integer limit
-    ) {
+	/**
+	 * Get Kubernetes events
+	 */
+	@Tool("Get Kubernetes events for a namespace or specific pod")
+	@Blocking
+	public Map<String, Object> getEvents(
+			String namespace,
+			String podName,
+			Integer limit
+	) {
         Log.info("=== Executing Tool: getEvents ===");
         
         if (namespace == null) {
@@ -201,17 +205,18 @@ public class K8sTools {
         }
     }
     
-    /**
-     * Get pod logs
-     */
-    @Tool("Get logs from a Kubernetes pod")
-    public Map<String, Object> getLogs(
-            String namespace,
-            String podName,
-            String containerName,
-            Boolean previous,
-            Integer tailLines
-    ) {
+	/**
+	 * Get pod logs
+	 */
+	@Tool("Get logs from a Kubernetes pod")
+	@Blocking
+	public Map<String, Object> getLogs(
+			String namespace,
+			String podName,
+			String containerName,
+			Boolean previous,
+			Integer tailLines
+	) {
         Log.info("=== Executing Tool: getLogs ===");
         
         if (namespace == null || podName == null) {
@@ -256,14 +261,15 @@ public class K8sTools {
         }
     }
     
-    /**
-     * Get pod metrics
-     */
-    @Tool("Get resource metrics for a Kubernetes pod")
-    public Map<String, Object> getMetrics(
-            String namespace,
-            String podName
-    ) {
+	/**
+	 * Get pod metrics
+	 */
+	@Tool("Get resource metrics for a Kubernetes pod")
+	@Blocking
+	public Map<String, Object> getMetrics(
+			String namespace,
+			String podName
+	) {
         Log.info("=== Executing Tool: getMetrics ===");
         
         if (namespace == null || podName == null) {
@@ -307,15 +313,16 @@ public class K8sTools {
         }
     }
     
-    /**
-     * Inspect Kubernetes resources
-     */
-    @Tool("Inspect Kubernetes resources in a namespace")
-    public Map<String, Object> inspectResources(
-            String namespace,
-            String resourceType,
-            String resourceName
-    ) {
+	/**
+	 * Inspect Kubernetes resources
+	 */
+	@Tool("Inspect Kubernetes resources in a namespace")
+	@Blocking
+	public Map<String, Object> inspectResources(
+			String namespace,
+			String resourceType,
+			String resourceName
+	) {
         Log.info("=== Executing Tool: inspectResources ===");
         
         if (namespace == null) {

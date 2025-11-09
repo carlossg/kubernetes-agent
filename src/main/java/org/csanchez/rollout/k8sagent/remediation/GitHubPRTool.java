@@ -6,6 +6,7 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 
 import io.quarkus.logging.Log;
+import io.smallrye.common.annotation.Blocking;
 
 import java.nio.file.Path;
 import java.text.MessageFormat;
@@ -14,6 +15,7 @@ import java.util.Map;
 /**
  * Tool that creates GitHub PRs with fixes.
  * Git operations are deterministic, only the fix content comes from AI.
+ * Marked as @Blocking since it performs I/O operations (git clone, file writes, network calls).
  */
 @ApplicationScoped
 public class GitHubPRTool {
@@ -35,28 +37,29 @@ public class GitHubPRTool {
         }
     }
     
-    /**
-     * Create a GitHub pull request with code fixes
-     * 
-     * @param repoUrl URL of the GitHub repository
-     * @param fileChanges Map of file paths to their new content
-     * @param fixDescription Description of the fix
-     * @param rootCause Root cause of the issue
-     * @param namespace Kubernetes namespace
-     * @param podName Kubernetes pod name
-     * @param testingRecommendations Testing recommendations
-     * @return Result of the PR creation
-     */
-    @Tool("Create a GitHub pull request with code fixes")
-    public Map<String, Object> createGitHubPR(
-            String repoUrl,
-            Map<String, String> fileChanges,
-            String fixDescription,
-            String rootCause,
-            String namespace,
-            String podName,
-            String testingRecommendations
-    ) {
+	/**
+	 * Create a GitHub pull request with code fixes
+	 * 
+	 * @param repoUrl URL of the GitHub repository
+	 * @param fileChanges Map of file paths to their new content
+	 * @param fixDescription Description of the fix
+	 * @param rootCause Root cause of the issue
+	 * @param namespace Kubernetes namespace
+	 * @param podName Kubernetes pod name
+	 * @param testingRecommendations Testing recommendations
+	 * @return Result of the PR creation
+	 */
+	@Tool("Create a GitHub pull request with code fixes")
+	@Blocking
+	public Map<String, Object> createGitHubPR(
+			String repoUrl,
+			Map<String, String> fileChanges,
+			String fixDescription,
+			String rootCause,
+			String namespace,
+			String podName,
+			String testingRecommendations
+	) {
         Log.info("=== Executing Tool: createGitHubPR ===");
         
         if (githubToken == null || githubToken.isEmpty()) {

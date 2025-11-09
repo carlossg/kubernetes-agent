@@ -134,16 +134,19 @@ public class A2AController {
 			
 			// Invoke agent with retry logic for 429 errors
 			Content userMsg = Content.fromParts(Part.fromText(prompt));
-			List<String> responses = RetryHelper.executeWithRetry(() -> {
+			List<String> responses = RetryHelper.executeWithRetry(() => {
 				Flowable<Event> events = analysisRunner.runAsync(
 					request.getUserId(),
 					session.id(),
 					userMsg
 				);
 				
-				// Collect results
+				// Collect results and log tool executions
 				List<String> eventResponses = new ArrayList<>();
 				events.blockingForEach(event -> {
+					// Use shared logging helper
+					KubernetesAgent.logToolExecution(event);
+					
 					String content = event.stringifyContent();
 					if (content != null && !content.isEmpty()) {
 						eventResponses.add(content);

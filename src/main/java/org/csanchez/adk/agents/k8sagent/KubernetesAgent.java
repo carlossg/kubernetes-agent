@@ -73,7 +73,34 @@ public class KubernetesAgent {
 				Content userMsg = Content.fromParts(Part.fromText(userInput));
 				Flowable<Event> events = runner.runAsync(USER_ID, session.id(), userMsg);
 				System.out.print("\nAgent > ");
-				events.blockingForEach(event -> System.out.println(event.stringifyContent()));
+				events.blockingForEach(event -> {
+					logToolExecution(event);
+					System.out.println(event.stringifyContent());
+				});
+			}
+		}
+	}
+	
+	/**
+	 * Log tool execution details from events
+	 * Shared helper method used by both console mode and A2A controller
+	 */
+	public static void logToolExecution(Event event) {
+		logger.debug("=== Event received: type={} ===", event.getClass().getSimpleName());
+		
+		// Log tool calls if present
+		if (event.content() != null && event.content().parts() != null) {
+			for (var part : event.content().parts()) {
+				if (part.functionCall() != null) {
+					var functionCall = part.functionCall();
+					logger.debug(">>> TOOL CALL: {}", functionCall.name());
+					logger.debug(">>> TOOL ARGS: {}", functionCall.args());
+				}
+				if (part.functionResponse() != null) {
+					var functionResponse = part.functionResponse();
+					logger.debug("<<< TOOL RESULT: {}", functionResponse.name());
+					logger.debug("<<< TOOL RESPONSE: {}", functionResponse.response());
+				}
 			}
 		}
 	}

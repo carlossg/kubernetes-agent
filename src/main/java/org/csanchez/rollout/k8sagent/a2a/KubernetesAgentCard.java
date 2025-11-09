@@ -4,7 +4,6 @@ import java.util.Collections;
 import java.util.List;
 
 import io.a2a.spec.AgentInterface;
-import io.a2a.spec.TransportProtocol;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
@@ -58,9 +57,9 @@ public class KubernetesAgentCard {
                                 .description("Analyzes canary deployment logs and metrics to determine if a canary deployment is healthy.")
                                 .tags(List.of("analysis", "kubernetes", "canary"))
                                 .build()))
-                .preferredTransport(TransportProtocol.JSONRPC.asString())
+                .preferredTransport("jsonrpc")
                 .additionalInterfaces(List.of(
-                        new AgentInterface(TransportProtocol.JSONRPC.asString(), baseUrl + "/a2a")))
+                        new AgentInterface("jsonrpc", baseUrl + "/a2a")))
                 .build();
     }
 }

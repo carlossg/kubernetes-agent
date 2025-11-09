@@ -310,19 +310,20 @@ public class K8sTools {
     /**
      * Inspect Kubernetes resources
      */
-    @Tool("Inspect Kubernetes resources in a namespace")
+    @Tool("Inspect Kubernetes resources in a namespace. Use labelSelector to filter pods by labels (e.g., 'role=stable' or 'role=canary')")
     public Map<String, Object> inspectResources(
             String namespace,
             String resourceType,
-            String resourceName
+            String resourceName,
+            String labelSelector
     ) {
         Log.info("=== Executing Tool: inspectResources ===");
         
         if (namespace == null) {
             return Map.of("error", "namespace is required");
         }
-        Log.info(MessageFormat.format("Inspecting resources in namespace: {0}, type: {1}, name: {2}",
-            namespace, resourceType, resourceName));
+        Log.info(MessageFormat.format("Inspecting resources in namespace: {0}, type: {1}, name: {2}, labelSelector: {3}",
+            namespace, resourceType, resourceName, labelSelector));
         
         
         try {
@@ -348,11 +349,58 @@ public class K8sTools {
                         info.put("replicas", d.getStatus().getReplicas() != null ? d.getStatus().getReplicas() : 0);
                         info.put("availableReplicas", d.getStatus().getAvailableReplicas() != null ? d.getStatus().getAvailableReplicas() : 0);
                         info.put("readyReplicas", d.getStatus().getReadyReplicas() != null ? d.getStatus().getReadyReplicas() : 0);
+                        info.put("labels", d.getMetadata().getLabels() != null ? d.getMetadata().getLabels() : Map.of());
                         return info;
                     })
                     .collect(Collectors.toList());
                 
                 result.put("deployments", deploymentInfo);
+            }
+            
+            if (resourceType == null || "pod".equalsIgnoreCase(resourceType)) {
+                List<Pod> pods;
+                
+                // Apply label selector if provided
+                if (labelSelector != null && !labelSelector.isEmpty()) {
+                    pods = k8sClient.pods()
+                        .inNamespace(namespace)
+                        .withLabel(labelSelector)
+                        .list()
+                        .getItems();
+                } else {
+                    pods = k8sClient.pods()
+                        .inNamespace(namespace)
+                        .list()
+                        .getItems();
+                }
+                
+                if (resourceName != null) {
+                    pods = pods.stream()
+                        .filter(p -> resourceName.equals(p.getMetadata().getName()))
+                        .collect(Collectors.toList());
+                }
+                
+                List<Map<String, Object>> podInfo = pods.stream()
+                    .map(p -> {
+                        Map<String, Object> info = new HashMap<>();
+                        info.put("name", p.getMetadata().getName());
+                        info.put("phase", p.getStatus().getPhase());
+                        info.put("podIP", p.getStatus().getPodIP() != null ? p.getStatus().getPodIP() : "");
+                        info.put("labels", p.getMetadata().getLabels() != null ? p.getMetadata().getLabels() : Map.of());
+                        
+                        // Container readiness
+                        if (p.getStatus().getContainerStatuses() != null) {
+                            long readyCount = p.getStatus().getContainerStatuses().stream()
+                                .filter(ContainerStatus::getReady)
+                                .count();
+                            info.put("readyContainers", readyCount + "/" + p.getStatus().getContainerStatuses().size());
+                        }
+                        
+                        return info;
+                    })
+                    .collect(Collectors.toList());
+                
+                result.put("pods", podInfo);
             }
             
             if (resourceType == null || "service".equalsIgnoreCase(resourceType)) {

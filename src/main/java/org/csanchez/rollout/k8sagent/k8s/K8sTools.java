@@ -337,7 +337,7 @@ public class K8sTools {
                     .list()
                     .getItems();
                 
-                if (resourceName != null) {
+                if (resourceName != null || !resourceName.isEmpty()) {
                     deployments = deployments.stream()
                         .filter(d -> resourceName.equals(d.getMetadata().getName()))
                         .collect(Collectors.toList());
@@ -375,7 +375,7 @@ public class K8sTools {
                         .getItems();
                 }
                 
-                if (resourceName != null) {
+                if (resourceName != null || !resourceName.isEmpty()) {
                     pods = pods.stream()
                         .filter(p -> resourceName.equals(p.getMetadata().getName()))
                         .collect(Collectors.toList());
@@ -410,7 +410,7 @@ public class K8sTools {
                     .list()
                     .getItems();
                 
-                if (resourceName != null) {
+                if (resourceName != null || !resourceName.isEmpty()) {
                     services = services.stream()
                         .filter(s -> resourceName.equals(s.getMetadata().getName()))
                         .collect(Collectors.toList());

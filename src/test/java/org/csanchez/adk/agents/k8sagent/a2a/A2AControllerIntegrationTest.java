@@ -3,13 +3,17 @@ package org.csanchez.adk.agents.k8sagent.a2a;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.runner.InMemoryRunner;
+import com.google.adk.tools.BaseTool;
+import com.google.adk.tools.FunctionTool;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -26,15 +30,73 @@ class A2AControllerIntegrationTest {
 	private A2AController controller;
 	private InMemoryRunner runner;
 	
+	/**
+	 * Mock Kubernetes tools for testing
+	 */
+	public static class MockK8sTools {
+		
+		public static Map<String, Object> getLogs(String namespace, String podSelector) {
+			Map<String, Object> result = new HashMap<>();
+			result.put("namespace", namespace);
+			result.put("podSelector", podSelector);
+			result.put("logs", "Mock log output: Application started successfully\nProcessing requests...");
+			return result;
+		}
+		
+		public static Map<String, Object> getEvents(String namespace) {
+			Map<String, Object> result = new HashMap<>();
+			result.put("namespace", namespace);
+			List<Map<String, Object>> events = new ArrayList<>();
+			
+			Map<String, Object> event = new HashMap<>();
+			event.put("type", "Normal");
+			event.put("reason", "Started");
+			event.put("message", "Started container successfully");
+			events.add(event);
+			
+			result.put("events", events);
+			return result;
+		}
+		
+		public static Map<String, Object> debugPod(String namespace, String podName) {
+			Map<String, Object> result = new HashMap<>();
+			result.put("namespace", namespace);
+			result.put("podName", podName);
+			result.put("phase", "Running");
+			result.put("ready", true);
+			return result;
+		}
+	}
+	
 	@BeforeEach
 	void setUp() {
-		// Create a minimal agent for testing
-		// IMPORTANT: Agent name must match what the controller uses ("KubernetesAgent")
+		// Create mock tools for testing (avoid requiring actual Kubernetes cluster)
+		List<BaseTool> mockTools = new ArrayList<>();
+		mockTools.add(FunctionTool.create(MockK8sTools.class, "getLogs"));
+		mockTools.add(FunctionTool.create(MockK8sTools.class, "getEvents"));
+		mockTools.add(FunctionTool.create(MockK8sTools.class, "debugPod"));
+		
+		// Create test agent with mock tools
 		BaseAgent testAgent = LlmAgent.builder()
 			.model("gemini-2.0-flash-exp")
 			.name("KubernetesAgent")
 			.description("Test agent for integration tests")
-			.instruction("You are a Kubernetes debugging agent. Analyze pod failures and provide brief recommendations.")
+			.instruction("""
+				You are a Kubernetes SRE analyzing canary deployments. Use your Kubernetes tools to fetch logs and events.
+				
+				CRITICAL: You MUST respond with valid JSON in this exact format:
+				{
+					"analysis": "detailed analysis text",
+					"rootCause": "identified root cause",
+					"remediation": "suggested remediation steps",
+					"prLink": null,
+					"promote": true or false,
+					"confidence": 0-100
+				}
+				
+				Use tools to gather real data, then provide your analysis in the JSON format above.
+				""")
+			.tools((Object[]) mockTools.toArray(new BaseTool[0]))
 			.build();
 		
 		runner = new InMemoryRunner(testAgent);
@@ -199,7 +261,8 @@ class A2AControllerIntegrationTest {
 		
 		Map<String, Object> context = new HashMap<>();
 		context.put("namespace", "default");
-		context.put("podName", "minimal-pod");
+		context.put("stableSelector", "role=stable");
+		context.put("canarySelector", "role=canary");
 		request.setContext(context);
 		
 		ResponseEntity<A2AResponse> response = controller.analyze(request);
@@ -226,12 +289,15 @@ class A2AControllerIntegrationTest {
 		
 		Map<String, Object> context = new HashMap<>();
 		context.put("namespace", namespace);
-		context.put("podName", podName);
+		// Use selectors instead of podName for agent mode
+		context.put("stableSelector", "role=stable");
+		context.put("canarySelector", "role=canary");
 		context.put("rolloutName", "test-rollout");
 		context.put("canaryVersion", "v2");
 		context.put("stableVersion", "v1");
 		context.put("failureReason", failureReason);
-		context.put("logs", logs);
+		// Include logs in context so tests can verify analysis mentions them
+		context.put("canaryLogs", logs);
 		
 		Map<String, String> event = new HashMap<>();
 		event.put("type", "Warning");

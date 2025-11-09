@@ -89,17 +89,20 @@ public class KubernetesAgent {
 		logger.debug("=== Event received: type={} ===", event.getClass().getSimpleName());
 		
 		// Log tool calls if present
-		if (event.content() != null && event.content().parts() != null) {
-			for (var part : event.content().parts()) {
-				if (part.functionCall() != null) {
-					var functionCall = part.functionCall();
-					logger.debug(">>> TOOL CALL: {}", functionCall.name());
-					logger.debug(">>> TOOL ARGS: {}", functionCall.args());
-				}
-				if (part.functionResponse() != null) {
-					var functionResponse = part.functionResponse();
-					logger.debug("<<< TOOL RESULT: {}", functionResponse.name());
-					logger.debug("<<< TOOL RESPONSE: {}", functionResponse.response());
+		if (event.content() != null && event.content().isPresent()) {
+			Content content = event.content().get();
+			if (content.parts() != null) {
+				for (var part : content.parts().get()) {
+					if (part.functionCall() != null && part.functionCall().isPresent()) {
+						var functionCall = part.functionCall().get();
+						logger.debug(">>> TOOL CALL: {}", functionCall.name());
+						logger.debug(">>> TOOL ARGS: {}", functionCall.args());
+					}
+					if (part.functionResponse() != null && part.functionResponse().isPresent()) {
+						var functionResponse = part.functionResponse().get();
+						logger.debug("<<< TOOL RESULT: {}", functionResponse.name());
+						logger.debug("<<< TOOL RESPONSE: {}", functionResponse.response());
+					}
 				}
 			}
 		}

@@ -218,6 +218,15 @@ public class A2AController {
 		prompt.append("2. Use get_kubernetes_events to see recent events\n");
 		prompt.append("3. Use debug_kubernetes_pod to check pod status\n");
 		prompt.append("4. Compare stable vs canary pod behavior\n");
+		
+		// Add extra prompt if provided in context
+		if (context != null && context.containsKey("extraPrompt")) {
+			String extraPrompt = (String) context.get("extraPrompt");
+			if (extraPrompt != null && !extraPrompt.isEmpty()) {
+				prompt.append("\nAdditional context: ").append(extraPrompt).append("\n");
+			}
+		}
+		
 		prompt.append("\nProvide a structured response with:\n");
 		prompt.append("- analysis: Detailed analysis text\n");
 		prompt.append("- rootCause: Identified root cause\n");

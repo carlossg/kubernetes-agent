@@ -28,6 +28,7 @@ spec:
                 secretKeyRef:
                   name: kubernetes-agent
                   key: google_api_key
+                  optional: true  # Make optional when using Gemma
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -43,8 +44,14 @@ spec:
               value: "kubernetes-agent"
             - name: GIT_EMAIL
               value: "kubernetes-agent@csanchez.org"
+            # Model configuration: Set GEMINI_MODEL to use Gemini API, or gemma-* to use vLLM
             - name: GEMINI_MODEL
-              value: "gemini-2.5-flash"
+              value: "gemini-2.5-flash"  # Change to "gemma-3-1b-it" to use local Gemma
+            # vLLM Gemma configuration (only used when GEMINI_MODEL starts with "gemma-")
+            - name: VLLM_API_BASE
+              value: "http://gemma-server.gemma-system.svc.cluster.local:8000"
+            - name: VLLM_API_KEY
+              value: "not-needed"  # vLLM doesn't require authentication for in-cluster access
           resources:
             requests:
               memory: "512Mi"

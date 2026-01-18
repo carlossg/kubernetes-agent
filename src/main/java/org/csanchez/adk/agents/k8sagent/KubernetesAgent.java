@@ -3,6 +3,8 @@ package org.csanchez.adk.agents.k8sagent;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.runner.InMemoryRunner;
+import com.google.adk.models.LlmRegistry;
+import org.csanchez.adk.agents.k8sagent.models.VllmGemma;
 import org.csanchez.adk.agents.k8sagent.remediation.GitHubPRTool;
 import org.csanchez.adk.agents.k8sagent.remediation.GitOperations;
 import org.csanchez.adk.agents.k8sagent.tools.*;
@@ -34,12 +36,40 @@ public class KubernetesAgent {
 	private static final String AGENT_NAME = "KubernetesAgent";
 	private static final String USER_ID = "argo-rollouts";
 
+	// Register custom vLLM Gemma model support
+	static {
+		registerVllmGemmaModels();
+	}
+
 	// K8S_TOOLS needed for A2A analysis agent (must be initialized before
 	// ROOT_AGENT)
 	public static final List<BaseTool> K8S_TOOLS = initTools();
 
 	// ROOT_AGENT needed for ADK Web UI and A2A communication
 	public static final BaseAgent ROOT_AGENT = initAgent();
+
+	/**
+	 * Register vLLM Gemma models in the LLM registry
+	 */
+	private static void registerVllmGemmaModels() {
+		String vllmApiBase = System.getenv("VLLM_API_BASE");
+		String vllmApiKey = System.getenv().getOrDefault("VLLM_API_KEY", "not-needed");
+
+		if (vllmApiBase != null && !vllmApiBase.isEmpty()) {
+			logger.info("Registering vLLM Gemma models with API base: {}", vllmApiBase);
+			
+			// Register pattern for gemma-* models to use vLLM
+			LlmRegistry.registerLlm("gemma-.*", modelName -> 
+				VllmGemma.builder()
+					.modelName(modelName)
+					.apiBaseUrl(vllmApiBase)
+					.apiKey(vllmApiKey)
+					.build()
+			);
+		} else {
+			logger.info("VLLM_API_BASE not set, vLLM Gemma models not registered");
+		}
+	}
 
 	public static void main(String[] args) {
 		// Start Spring Boot application (includes REST API for A2A)

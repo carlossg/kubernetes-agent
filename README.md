@@ -238,11 +238,40 @@ spec:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GOOGLE_API_KEY` | Yes | Google Gemini API key |
+| `GOOGLE_API_KEY` | Conditional | Google Gemini API key (required when using Gemini models) |
 | `GITHUB_TOKEN` | Yes | GitHub personal access token |
 | `GIT_USERNAME` | No | Git commit username (default: "kubernetes-agent") |
 | `GIT_EMAIL` | No | Git commit email (default: "agent@example.com") |
+| `GEMINI_MODEL` | Yes | Model to use (e.g., "gemini-2.5-flash" or "gemma-3-1b-it") |
+| `VLLM_API_BASE` | Conditional | vLLM server base URL (required when using gemma-* models) |
+| `VLLM_API_KEY` | No | vLLM API key (default: "not-needed") |
 | `K8S_AGENT_URL` | No | Agent URL for plugin (default: http://kubernetes-agent.argo-rollouts.svc.cluster.local:8080) |
+
+### Model Configuration
+
+The agent supports two modes:
+
+#### 1. Google Gemini API (Cloud)
+```yaml
+env:
+  - name: GOOGLE_API_KEY
+    value: "your-gemini-api-key"
+  - name: GEMINI_MODEL
+    value: "gemini-2.5-flash"
+```
+
+#### 2. Local vLLM Gemma (Self-hosted)
+```yaml
+env:
+  - name: GEMINI_MODEL
+    value: "gemma-3-1b-it"  # Any model name starting with "gemma-"
+  - name: VLLM_API_BASE
+    value: "http://gemma-server.gemma-system.svc.cluster.local:8000"
+  - name: VLLM_API_KEY
+    value: "not-needed"  # Optional
+```
+
+> **Note**: When `GEMINI_MODEL` starts with `gemma-`, the agent automatically uses the vLLM endpoint specified in `VLLM_API_BASE`. The Gemma model must be deployed separately (see [deployment/gemma/README.md](deployment/gemma/README.md)).
 
 ### Resource Limits
 

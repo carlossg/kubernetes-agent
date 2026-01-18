@@ -18,7 +18,7 @@ spec:
         demo: argo-rollouts
     spec:
       nodeSelector:
-        cloud.google.com/gke-accelerator: "nvidia-tesla-t4"
+        cloud.google.com/gke-accelerator: "nvidia-l4"
         cloud.google.com/gke-accelerator-count: "1"
       containers:
         - name: gemma
@@ -30,11 +30,11 @@ spec:
               protocol: TCP
           env:
             - name: MODEL_NAME
-              value: "google/gemma-1.1-2b-it"  # Gemma 1.1 works better on T4
+              value: "google/gemma-3-1b-it"  # Gemma 3 1B fits well on L4
             - name: SERVED_MODEL_NAME
-              value: "gemma-1.1-2b-it"
+              value: "gemma-3-1b-it"
             - name: MAX_MODEL_LEN
-              value: "4096"  # Gemma 1.1 fits better on T4
+              value: "8192"  # L4 can handle 8K context with Gemma 3 1B
             - name: GPU_MEMORY_UTILIZATION
               value: "0.9"
             - name: TENSOR_PARALLEL_SIZE
@@ -48,6 +48,9 @@ spec:
             # Use PVC for model caching (avoid re-downloading)
             - name: HF_HOME
               value: "/model-cache"
+            # Reduce memory fragmentation
+            - name: PYTORCH_CUDA_ALLOC_CONF
+              value: "expandable_segments:True"
           volumeMounts:
             - name: model-cache
               mountPath: /model-cache
@@ -69,9 +72,6 @@ spec:
             - "0.0.0.0"
             - --port
             - "8000"
-            - --disable-custom-all-reduce
-            - --disable-log-requests
-            - --enforce-eager  # Disable torch.compile to avoid Triton shared memory issues on T4
           resources:
             requests:
               memory: "8Gi"

@@ -35,10 +35,17 @@ public class KubernetesAgent {
 	private static final String MODEL_NAME = System.getenv().getOrDefault("GEMINI_MODEL", "gemini-2.5-flash");
 	private static final String AGENT_NAME = "KubernetesAgent";
 	private static final String USER_ID = "argo-rollouts";
+	
+	// Multi-model configuration
+	private static final String MODELS_TO_USE = System.getenv().getOrDefault("MODELS_TO_USE", "");
+	private static final boolean ENABLE_MULTI_MODEL = Boolean.parseBoolean(
+			System.getenv().getOrDefault("ENABLE_MULTI_MODEL", "false"));
+	private static final List<String> AVAILABLE_MODELS = new ArrayList<>();
 
 	// Register custom vLLM Gemma model support
 	static {
 		registerVllmGemmaModels();
+		initializeAvailableModels();
 	}
 
 	// K8S_TOOLS needed for A2A analysis agent (must be initialized before
@@ -69,6 +76,60 @@ public class KubernetesAgent {
 		} else {
 			logger.info("VLLM_API_BASE not set, vLLM Gemma models not registered");
 		}
+	}
+	
+	/**
+	 * Initialize the list of available models
+	 */
+	private static void initializeAvailableModels() {
+		// Always include the default Gemini model
+		AVAILABLE_MODELS.add(MODEL_NAME);
+		
+		// Add vLLM models if configured
+		String vllmApiBase = System.getenv("VLLM_API_BASE");
+		String vllmModel = System.getenv().getOrDefault("VLLM_MODEL", "gemma-3-1b-it");
+		if (vllmApiBase != null && !vllmApiBase.isEmpty()) {
+			AVAILABLE_MODELS.add(vllmModel);
+		}
+		
+		logger.info("Available models: {}", AVAILABLE_MODELS);
+		logger.info("Multi-model analysis enabled: {}", ENABLE_MULTI_MODEL);
+	}
+	
+	/**
+	 * Get list of models to use for analysis
+	 * Returns models specified in MODELS_TO_USE env var, or all available models if not set
+	 */
+	public static List<String> getModelsToUse() {
+		if (!MODELS_TO_USE.isEmpty()) {
+			// Parse comma-separated list
+			List<String> models = new ArrayList<>();
+			for (String model : MODELS_TO_USE.split(",")) {
+				String trimmed = model.trim();
+				if (!trimmed.isEmpty()) {
+					models.add(trimmed);
+				}
+			}
+			logger.debug("Using configured models: {}", models);
+			return models;
+		}
+		
+		// Default: use all available models if multi-model is enabled
+		if (ENABLE_MULTI_MODEL) {
+			logger.debug("Using all available models: {}", AVAILABLE_MODELS);
+			return new ArrayList<>(AVAILABLE_MODELS);
+		}
+		
+		// Single-model mode: use only the default model
+		logger.debug("Single-model mode: using {}", MODEL_NAME);
+		return List.of(MODEL_NAME);
+	}
+	
+	/**
+	 * Check if multi-model analysis is enabled
+	 */
+	public static boolean isMultiModelEnabled() {
+		return ENABLE_MULTI_MODEL;
 	}
 
 	public static void main(String[] args) {

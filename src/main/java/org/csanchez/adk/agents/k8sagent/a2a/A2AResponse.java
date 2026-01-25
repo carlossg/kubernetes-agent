@@ -1,7 +1,10 @@
 package org.csanchez.adk.agents.k8sagent.a2a;
 
+import java.util.List;
+
 /**
  * A2A response to rollouts-plugin-metric-ai
+ * Supports both single-model and multi-model analysis
  */
 public class A2AResponse {
 	private String analysis;
@@ -10,6 +13,10 @@ public class A2AResponse {
 	private String prLink;
 	private boolean promote;
 	private int confidence;
+	
+	// Multi-model fields
+	private List<ModelAnalysisResult> modelResults;
+	private String votingRationale;
 	
 	public String getAnalysis() {
 		return analysis;
@@ -57,6 +64,22 @@ public class A2AResponse {
 	
 	public void setConfidence(int confidence) {
 		this.confidence = confidence;
+	}
+	
+	public List<ModelAnalysisResult> getModelResults() {
+		return modelResults;
+	}
+	
+	public void setModelResults(List<ModelAnalysisResult> modelResults) {
+		this.modelResults = modelResults;
+	}
+	
+	public String getVotingRationale() {
+		return votingRationale;
+	}
+	
+	public void setVotingRationale(String votingRationale) {
+		this.votingRationale = votingRationale;
 	}
 }
 

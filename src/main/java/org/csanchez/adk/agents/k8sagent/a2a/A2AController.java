@@ -22,6 +22,10 @@ import org.springframework.web.bind.annotation.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 /**
  * REST controller for Agent-to-Agent (A2A) communication
@@ -32,6 +36,7 @@ public class A2AController {
 
 	private static final Logger logger = LoggerFactory.getLogger(A2AController.class);
 	private static final ObjectMapper objectMapper = new ObjectMapper();
+	private static final ExecutorService executorService = Executors.newCachedThreadPool();
 
 	private final InMemoryRunner runner;
 
@@ -99,18 +104,144 @@ public class A2AController {
 	/**
 	 * Main A2A analyze endpoint
 	 * Called by rollouts-plugin-metric-ai to analyze canary issues
+	 * Supports both single-model and multi-model parallel analysis
 	 */
 	@PostMapping("/analyze")
 	public ResponseEntity<A2AResponse> analyze(@RequestBody A2ARequest request) {
 		logger.info("Received A2A analysis request from user: {}", request.getUserId());
 
 		try {
-			// Get model name from the environment variable (same as root agent)
-			String modelName = System.getenv().getOrDefault("GEMINI_MODEL", "gemini-2.5-flash");
+			// Determine which models to use
+			List<String> modelsToUse = determineModelsToUse(request);
+			logger.info("Using {} model(s) for analysis: {}", modelsToUse.size(), modelsToUse);
+			
+			// Check if multi-model analysis is needed
+			if (modelsToUse.size() > 1) {
+				return analyzeWithMultipleModels(request, modelsToUse);
+			} else {
+				return analyzeWithSingleModel(request, modelsToUse.get(0));
+			}
 
-			// Create dedicated agent with tools (cannot use outputSchema with tools)
+		} catch (Exception e) {
+			logger.error("Error processing A2A request from user: {}", request.getUserId(), e);
+			logger.error("Request details - Prompt: {}", request.getPrompt());
+			logger.error("Request details - Context: {}", request.getContext());
+
+			A2AResponse errorResponse = new A2AResponse();
+			errorResponse.setAnalysis("Error: " + e.getMessage());
+			errorResponse.setRootCause("Analysis failed");
+			errorResponse.setRemediation("Unable to provide remediation");
+			errorResponse.setPromote(true); // Default to promote on error
+			errorResponse.setConfidence(0);
+
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+					.body(errorResponse);
+		}
+	}
+	
+	/**
+	 * Determine which models to use for this request
+	 */
+	private List<String> determineModelsToUse(A2ARequest request) {
+		// Check if specific models requested
+		if (request.getModelsToUse() != null && !request.getModelsToUse().isEmpty()) {
+			return request.getModelsToUse();
+		}
+		
+		// Use configured models from KubernetesAgent
+		return KubernetesAgent.getModelsToUse();
+	}
+	
+	/**
+	 * Analyze with multiple models in parallel and aggregate results
+	 */
+	private ResponseEntity<A2AResponse> analyzeWithMultipleModels(A2ARequest request, List<String> models) {
+		logger.info("Running parallel analysis with {} models", models.size());
+		
+		// Run analyses in parallel
+		List<CompletableFuture<ModelAnalysisResult>> futures = models.stream()
+				.map(modelName -> CompletableFuture.supplyAsync(
+						() -> runSingleModelAnalysis(request, modelName),
+						executorService))
+				.collect(Collectors.toList());
+		
+		// Wait for all to complete
+		CompletableFuture<Void> allOf = CompletableFuture.allOf(
+				futures.toArray(new CompletableFuture[0]));
+		
+		try {
+			allOf.join(); // Wait for all futures to complete
+			
+			// Collect results
+			List<ModelAnalysisResult> results = futures.stream()
+					.map(CompletableFuture::join)
+					.collect(Collectors.toList());
+			
+			logger.info("All {} model analyses completed", results.size());
+			
+			// Aggregate results using weighted voting
+			VotingAggregator.AggregatedResult aggregated = VotingAggregator.aggregate(results);
+			
+			// Build response
+			A2AResponse response = new A2AResponse();
+			response.setAnalysis(aggregated.getConsolidatedAnalysis());
+			response.setRootCause(aggregated.getConsolidatedRootCause());
+			response.setRemediation(aggregated.getConsolidatedRemediation());
+			response.setPromote(aggregated.isPromote());
+			response.setConfidence(aggregated.getAverageConfidence());
+			response.setModelResults(results);
+			response.setVotingRationale(aggregated.getVotingRationale());
+			
+			logger.info("Multi-model analysis complete: promote={}, promoteScore={}, rollbackScore={}",
+					aggregated.isPromote(), aggregated.getPromoteScore(), aggregated.getRollbackScore());
+			
+			return ResponseEntity.ok(response);
+			
+		} catch (Exception e) {
+			logger.error("Error during multi-model analysis", e);
+			throw new RuntimeException("Multi-model analysis failed", e);
+		}
+	}
+	
+	/**
+	 * Analyze with a single model (backward compatible)
+	 */
+	private ResponseEntity<A2AResponse> analyzeWithSingleModel(A2ARequest request, String modelName) {
+		logger.info("Running single-model analysis with: {}", modelName);
+		
+		ModelAnalysisResult result = runSingleModelAnalysis(request, modelName);
+		
+		// Convert to A2AResponse
+		A2AResponse response = new A2AResponse();
+		response.setAnalysis(result.getAnalysis());
+		response.setRootCause(result.getRootCause());
+		response.setRemediation(result.getRemediation());
+		response.setPromote(result.isPromote());
+		response.setConfidence(result.getConfidence());
+		
+		// Include single model result in list for consistency
+		response.setModelResults(List.of(result));
+		
+		logger.info("Single-model analysis complete: promote={}, confidence={}",
+				result.isPromote(), result.getConfidence());
+		
+		return ResponseEntity.ok(response);
+	}
+	
+	/**
+	 * Run analysis with a single model
+	 */
+	private ModelAnalysisResult runSingleModelAnalysis(A2ARequest request, String modelName) {
+		long startTime = System.currentTimeMillis();
+		ModelAnalysisResult result = new ModelAnalysisResult();
+		result.setModelName(modelName);
+		
+		try {
+			logger.info("Starting analysis with model: {}", modelName);
+			
+			// Create dedicated agent with tools
 			LlmAgent analysisAgent = LlmAgent.builder()
-					.name("a2a-analysis")
+					.name("a2a-analysis-" + modelName)
 					.model(modelName)
 					.instruction(
 							"""
@@ -128,8 +259,7 @@ public class A2AController {
 
 									Use tools to gather real data, then provide your analysis in the JSON format above.
 									""")
-					.tools((Object[]) KubernetesAgent.K8S_TOOLS.toArray(new BaseTool[0])) // Use the same tools as the
-																							// root agent
+					.tools((Object[]) KubernetesAgent.K8S_TOOLS.toArray(new BaseTool[0]))
 					.build();
 
 			// Create runner with analysis agent
@@ -142,9 +272,9 @@ public class A2AController {
 
 			// Build prompt with context
 			String prompt = buildPrompt(request);
-			logger.debug("Built prompt: {}", prompt);
+			logger.debug("Built prompt for {}: {}", modelName, prompt);
 
-			// Invoke agent with retry logic for 429 errors
+			// Invoke agent with retry logic
 			Content userMsg = Content.fromParts(Part.fromText(prompt));
 			List<String> responses = RetryHelper.executeWithRetry(() -> {
 				Flowable<Event> events = analysisRunner.runAsync(
@@ -155,44 +285,40 @@ public class A2AController {
 				// Collect results and log tool executions
 				List<String> eventResponses = new ArrayList<>();
 				events.blockingForEach(event -> {
-					// Use shared logging helper
 					KubernetesAgent.logToolExecution(event);
-
 					String content = event.stringifyContent();
 					if (content != null && !content.isEmpty()) {
 						eventResponses.add(content);
-						logger.debug("Received event content: {}", content);
 					}
 				});
 
 				return eventResponses;
-			}, "Gemini API analysis");
+			}, "Model analysis: " + modelName);
 
 			// Parse JSON response
 			String fullResponse = String.join("\n", responses);
-			A2AResponse response = parseJsonResponse(fullResponse);
-
-			logger.info("A2A analysis completed successfully");
-			logger.debug("Analysis result: promote={}, confidence={}",
-					response.isPromote(), response.getConfidence());
-
-			return ResponseEntity.ok(response);
-
+			A2AResponse parsedResponse = parseJsonResponse(fullResponse);
+			
+			// Populate result
+			result.setAnalysis(parsedResponse.getAnalysis());
+			result.setRootCause(parsedResponse.getRootCause());
+			result.setRemediation(parsedResponse.getRemediation());
+			result.setPromote(parsedResponse.isPromote());
+			result.setConfidence(parsedResponse.getConfidence());
+			result.setExecutionTimeMs(System.currentTimeMillis() - startTime);
+			
+			logger.info("Model {} completed: promote={}, confidence={}, time={}ms",
+					modelName, result.isPromote(), result.getConfidence(), result.getExecutionTimeMs());
+			
 		} catch (Exception e) {
-			logger.error("Error processing A2A request from user: {}", request.getUserId(), e);
-			logger.error("Request details - Prompt: {}", request.getPrompt());
-			logger.error("Request details - Context: {}", request.getContext());
-
-			A2AResponse errorResponse = new A2AResponse();
-			errorResponse.setAnalysis("Error: " + e.getMessage());
-			errorResponse.setRootCause("Analysis failed");
-			errorResponse.setRemediation("Unable to provide remediation");
-			errorResponse.setPromote(true); // Default to promote on error
-			errorResponse.setConfidence(0);
-
-			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-					.body(errorResponse);
+			logger.error("Error running analysis with model: {}", modelName, e);
+			result.setError("Analysis failed: " + e.getMessage());
+			result.setPromote(true); // Default to promote on error
+			result.setConfidence(0);
+			result.setExecutionTimeMs(System.currentTimeMillis() - startTime);
 		}
+		
+		return result;
 	}
 
 	/**

@@ -398,4 +398,85 @@ Additional development documentation is available in the `docs/development/` dir
 - Testing strategies
 - Rate limiting and fork modes
 
+## Multi-Model Parallel Analysis
+
+The agent supports analyzing canary deployments with multiple LLMs running in parallel, using confidence-weighted voting for the final decision.
+
+### Configuration
+
+Enable multi-model analysis:
+
+```yaml
+- name: ENABLE_MULTI_MODEL
+  value: "true"
+- name: MODELS_TO_USE
+  value: "gemini-2.5-flash,gemma-3-1b-it"  # Comma-separated list (optional, defaults to all available)
+- name: VOTING_STRATEGY
+  value: "weighted"  # Confidence-weighted voting
+```
+
+### How It Works
+
+1. **Parallel Execution**: Each model analyzes independently and simultaneously
+2. **Confidence-Weighted Voting**: 
+   - `promote_score = Σ(confidence/100) for PROMOTE votes`
+   - `rollback_score = Σ(confidence/100) for ROLLBACK votes`
+   - Decision: PROMOTE if `promote_score > rollback_score`
+3. **Consolidated Reporting**: All model results preserved in response
+4. **GitHub Issue Creation**: On rollback, creates issue with:
+   - Voting breakdown (promote vs rollback scores)
+   - Individual model recommendations with confidence
+   - Detailed analyses from each model
+   - Timestamp and rollout metadata
+
+### Benefits
+
+- **Higher Reliability**: Multiple perspectives reduce false positives/negatives
+- **Confidence Validation**: Cross-validation between models
+- **Model Diversity**: Different models may catch different types of issues
+- **Full Observability**: Complete transparency into each model's reasoning
+- **Fast**: Parallel execution means latency ≈ slowest model (~3-5s for 2 models)
+
+### Example Multi-Model Response
+
+```json
+{
+  "analysis": "Multi-model analysis consensus:\n\n--- gemini-2.5-flash ---\nDatabase connection timeout detected...\n\n--- gemma-3-1b-it ---\nHigh error rate in canary logs...",
+  "rootCause": "gemini-2.5-flash: Database connection timeout; gemma-3-1b-it: High error rate",
+  "remediation": "- Increase database connection timeout\n- Add retry logic with exponential backoff",
+  "promote": false,
+  "confidence": 78,
+  "modelResults": [
+    {
+      "modelName": "gemini-2.5-flash",
+      "promote": false,
+      "confidence": 85,
+      "executionTimeMs": 3245
+    },
+    {
+      "modelName": "gemma-3-1b-it",
+      "promote": false,
+      "confidence": 72,
+      "executionTimeMs": 2891
+    }
+  ],
+  "votingRationale": "Confidence-weighted voting: Promote=0.00, Rollback=1.57. Final decision: ROLLBACK.\n\nIndividual model votes:\n- gemini-2.5-flash: ROLLBACK (confidence: 85%)\n- gemma-3-1b-it: ROLLBACK (confidence: 72%)\n"
+}
+```
+
+### Testing Multi-Model Locally
+
+Use the provided test script:
+
+```bash
+./test-multi-model.sh
+```
+
+This script:
+1. Builds the Docker image
+2. Starts port-forward to GKE Gemma server
+3. Runs agent with multi-model configuration
+4. Sends test query with both models
+5. Verifies parallel execution and weighted voting work correctly
+
 

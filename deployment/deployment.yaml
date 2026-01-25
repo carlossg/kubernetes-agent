@@ -28,7 +28,7 @@ spec:
                 secretKeyRef:
                   name: kubernetes-agent
                   key: google_api_key
-                  optional: true  # Make optional when using Gemma
+                  optional: false  # Required for Gemini in multi-model mode
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -44,14 +44,23 @@ spec:
               value: "kubernetes-agent"
             - name: GIT_EMAIL
               value: "kubernetes-agent@csanchez.org"
-            # Model configuration: Set GEMINI_MODEL to use Gemini API, or gemma-* to use vLLM
+            # Single-model configuration (backward compatible)
             - name: GEMINI_MODEL
-              value: "gemini-2.5-flash"  # Change to "gemma-3-1b-it" to use local Gemma
-            # vLLM Gemma configuration (only used when GEMINI_MODEL starts with "gemma-")
+              value: "gemini-2.5-flash" # Gemini model from Google API
+            # vLLM configuration for local Gemma models
+            - name: VLLM_MODEL
+              value: "gemma-3-1b-it" # Local vLLM model
             - name: VLLM_API_BASE
               value: "http://gemma-server.gemma-system.svc.cluster.local:8000"
             - name: VLLM_API_KEY
               value: "not-needed"  # vLLM doesn't require authentication for in-cluster access
+            # Multi-model configuration - ENABLED for Gemini + Gemma parallel analysis
+            - name: ENABLE_MULTI_MODEL
+              value: "true" # Enable multi-model parallel analysis
+            - name: MODELS_TO_USE
+              value: "gemini-2.5-flash,gemma-3-1b-it" # Both Gemini and Gemma
+            - name: VOTING_STRATEGY
+              value: "weighted" # Confidence-weighted voting
           resources:
             requests:
               memory: "512Mi"

@@ -1,11 +1,16 @@
 package org.csanchez.adk.agents.k8sagent.remediation;
 
 import com.google.adk.tools.BaseTool;
+import org.csanchez.adk.agents.k8sagent.a2a.ModelAnalysisResult;
 import org.kohsuke.github.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.file.Path;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -155,6 +160,119 @@ public class GitHubPRTool extends BaseTool {
 			namespace,
 			podName
 		);
+	}
+	
+	/**
+	 * Create a consolidated GitHub issue for canary rollback
+	 * Used when multi-model analysis decides to rollback
+	 */
+	public static GHIssue createRollbackIssue(String repoUrl, String rolloutName, String namespace,
+	                                          List<ModelAnalysisResult> modelResults,
+	                                          double promoteScore, double rollbackScore,
+	                                          String votingRationale) throws IOException {
+		logger.info("Creating consolidated rollback issue for rollout: {}/{}", namespace, rolloutName);
+		
+		String token = System.getenv("GITHUB_TOKEN");
+		if (token == null || token.isEmpty()) {
+			throw new IllegalStateException("GITHUB_TOKEN environment variable is required");
+		}
+		
+		GitHub github = new GitHubBuilder().withOAuthToken(token).build();
+		String repoName = extractRepoNameStatic(repoUrl);
+		GHRepository repo = github.getRepository(repoName);
+		
+		String issueTitle = String.format("[Canary Rollback] %s/%s", namespace, rolloutName);
+		String issueBody = generateRollbackIssueBody(rolloutName, namespace, modelResults,
+				promoteScore, rollbackScore, votingRationale);
+		
+		GHIssue issue = repo.createIssue(issueTitle)
+				.body(issueBody)
+				.label("canary-rollback")
+				.label("automated")
+				.create();
+		
+		logger.info("Successfully created rollback issue: {}", issue.getHtmlUrl());
+		return issue;
+	}
+	
+	/**
+	 * Generate issue body for canary rollback
+	 */
+	private static String generateRollbackIssueBody(String rolloutName, String namespace,
+	                                               List<ModelAnalysisResult> modelResults,
+	                                               double promoteScore, double rollbackScore,
+	                                               String votingRationale) {
+		StringBuilder sb = new StringBuilder();
+		
+		// Header
+		sb.append("## Canary Rollback Decision\n\n");
+		sb.append(String.format("**Rollout**: `%s`  \n", rolloutName));
+		sb.append(String.format("**Namespace**: `%s`  \n", namespace));
+		sb.append(String.format("**Timestamp**: `%s`  \n\n",
+				ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)));
+		
+		// Voting Summary
+		sb.append(String.format("**Decision**: ❌ ROLLBACK (Weighted Vote: Promote %.2f vs Rollback %.2f)\n\n",
+				promoteScore, rollbackScore));
+		
+		// Model Analysis Summary Table
+		sb.append("### Model Analysis Summary\n\n");
+		sb.append("| Model | Recommendation | Confidence | Execution Time |\n");
+		sb.append("|-------|----------------|------------|----------------|\n");
+		
+		for (ModelAnalysisResult result : modelResults) {
+			String recommendation = result.isPromote() ? "✅ PROMOTE" : "❌ ROLLBACK";
+			sb.append(String.format("| %s | %s | %d%% | %dms |\n",
+					result.getModelName(),
+					recommendation,
+					result.getConfidence(),
+					result.getExecutionTimeMs()));
+		}
+		sb.append("\n");
+		
+		// Voting Rationale
+		sb.append("### Voting Rationale\n\n");
+		sb.append("```\n");
+		sb.append(votingRationale);
+		sb.append("```\n\n");
+		
+		// Detailed Analyses
+		sb.append("### Detailed Model Analyses\n\n");
+		
+		for (ModelAnalysisResult result : modelResults) {
+			sb.append(String.format("#### %s\n\n", result.getModelName()));
+			
+			if (result.getError() != null && !result.getError().isEmpty()) {
+				sb.append(String.format("**Error**: %s\n\n", result.getError()));
+				continue;
+			}
+			
+			sb.append(String.format("**Root Cause**: %s\n\n", result.getRootCause()));
+			sb.append(String.format("**Analysis**:\n%s\n\n", result.getAnalysis()));
+			sb.append(String.format("**Remediation**:\n%s\n\n", result.getRemediation()));
+			sb.append("---\n\n");
+		}
+		
+		// Footer
+		sb.append("### Rollout Information\n\n");
+		sb.append(String.format("- **Namespace**: `%s`\n", namespace));
+		sb.append(String.format("- **Rollout**: `%s`\n", rolloutName));
+		sb.append(String.format("- **Timestamp**: `%s`\n\n",
+				ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)));
+		
+		sb.append("---\n");
+		sb.append("*This issue was automatically created by Kubernetes AI Agent multi-model analysis*\n");
+		
+		return sb.toString();
+	}
+	
+	/**
+	 * Static version of extractRepoName for use in static methods
+	 */
+	private static String extractRepoNameStatic(String repoUrl) {
+		String cleaned = repoUrl.replace("https://github.com/", "")
+				.replace(".git", "");
+		return cleaned;
 	}
 }
 

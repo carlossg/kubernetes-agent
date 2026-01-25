@@ -265,9 +265,10 @@ public class A2AController {
 			// Create runner with analysis agent
 			InMemoryRunner analysisRunner = new InMemoryRunner(analysisAgent);
 
-			// Create session for this analysis
+			// Create a unique session for this specific analysis
+			String sessionName = "a2a-analysis-" + System.currentTimeMillis();
 			Session session = analysisRunner.sessionService()
-					.createSession("a2a-analysis", request.getUserId())
+					.createSession(sessionName, request.getUserId())
 					.blockingGet();
 
 			// Build prompt with context
@@ -299,10 +300,10 @@ public class A2AController {
 			String fullResponse = String.join("\n", responses);
 			A2AResponse parsedResponse = parseJsonResponse(fullResponse);
 			
-			// Populate result
-			result.setAnalysis(parsedResponse.getAnalysis());
-			result.setRootCause(parsedResponse.getRootCause());
-			result.setRemediation(parsedResponse.getRemediation());
+			// Populate result with null-safety
+			result.setAnalysis(parsedResponse.getAnalysis() != null ? parsedResponse.getAnalysis() : "Analysis completed");
+			result.setRootCause(parsedResponse.getRootCause() != null ? parsedResponse.getRootCause() : "Root cause analysis pending");
+			result.setRemediation(parsedResponse.getRemediation() != null ? parsedResponse.getRemediation() : "Review required");
 			result.setPromote(parsedResponse.isPromote());
 			result.setConfidence(parsedResponse.getConfidence());
 			result.setExecutionTimeMs(System.currentTimeMillis() - startTime);
@@ -313,6 +314,9 @@ public class A2AController {
 		} catch (Exception e) {
 			logger.error("Error running analysis with model: {}", modelName, e);
 			result.setError("Analysis failed: " + e.getMessage());
+			result.setAnalysis("Analysis encountered an error: " + e.getMessage());
+			result.setRootCause("Technical failure during analysis");
+			result.setRemediation("Please check logs and retry");
 			result.setPromote(true); // Default to promote on error
 			result.setConfidence(0);
 			result.setExecutionTimeMs(System.currentTimeMillis() - startTime);

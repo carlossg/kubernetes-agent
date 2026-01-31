@@ -342,13 +342,6 @@ public class A2AController {
 				Session session = analysisRunner.sessionService()
 						.createSession(sessionName, userId)
 						.blockingGet();
-				
-				// Verify session exists before running
-				try {
-					analysisRunner.sessionService().getSession(session.id(), userId).blockingGet();
-				} catch (Exception e) {
-					logger.warn("Session created but verification failed for id: {} user: {}", session.id(), userId);
-				}
 
 				Flowable<Event> events = analysisRunner.runAsync(
 						userId,

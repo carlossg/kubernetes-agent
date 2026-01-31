@@ -318,6 +318,8 @@ public class A2AController {
 						.instruction(
 								"""
 										You are a Kubernetes SRE analyzing canary deployments. Use your Kubernetes tools to fetch logs and events.
+										
+										Do not write a script or code to perform the analysis. You must perform the analysis yourself by calling the available tools.
 
 										CRITICAL: You MUST respond with valid JSON in this exact format:
 										{
@@ -422,6 +424,7 @@ public class A2AController {
 		prompt.append("2. Use get_kubernetes_events to see recent events\n");
 		prompt.append("3. Use debug_kubernetes_pod to check pod status\n");
 		prompt.append("4. Compare stable vs canary pod behavior\n");
+		prompt.append("IMPORTANT: Execute these tools directly. Do NOT write code/scripts to invoke them.\n");
 		
 		// Add extra prompt if provided in context
 		if (context != null && context.containsKey("extraPrompt")) {

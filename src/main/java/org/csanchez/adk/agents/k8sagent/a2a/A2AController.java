@@ -41,6 +41,7 @@ public class A2AController {
 
 	private final InMemoryRunner runner;
 	private final Map<String, InMemoryRunner> modelRunners = new ConcurrentHashMap<>();
+	private final Map<String, Session> modelSessions = new ConcurrentHashMap<>();
 
 	private static Schema createResponseSchema() {
 		try {
@@ -334,14 +335,20 @@ public class A2AController {
 			// Invoke agent with retry logic
 			Content userMsg = Content.fromParts(Part.fromText(prompt));
 			List<String> responses = RetryHelper.executeWithRetry(() -> {
-				// Create a unique session for this specific analysis
-				// We do this inside the retry loop to handle "Session not found" errors by creating a fresh session
-				String sessionName = "a2a-analysis-" + java.util.UUID.randomUUID().toString();
 				String userId = request.getUserId().trim();
-
-				Session session = analysisRunner.sessionService()
-						.createSession(sessionName, userId)
-						.blockingGet();
+				
+				// Get or create persistent session for this model/user
+				// We use a composite key of modelName + userId to ensure isolation if multiple users were supported
+				// But for now we just cache by modelName since userId is always "argo-rollouts"
+				String sessionKey = modelName + ":" + userId;
+				Session session = modelSessions.computeIfAbsent(sessionKey, k -> {
+					String sessionName = "a2a-" + modelName + "-" + System.currentTimeMillis();
+					logger.info("Creating new persistent session '{}' for user '{}' and model '{}'", 
+							sessionName, userId, modelName);
+					return analysisRunner.sessionService()
+							.createSession(sessionName, userId)
+							.blockingGet();
+				});
 
 				Flowable<Event> events = analysisRunner.runAsync(
 						userId,

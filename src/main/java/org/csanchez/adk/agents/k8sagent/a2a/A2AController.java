@@ -179,7 +179,50 @@ public class A2AController {
 			
 			logger.info("All {} model analyses completed", results.size());
 			
-			// Aggregate results using weighted voting
+			// Log which models succeeded and which failed
+			List<String> succeededModels = results.stream()
+					.filter(r -> r.getError() == null || r.getError().isEmpty())
+					.map(ModelAnalysisResult::getModelName)
+					.collect(Collectors.toList());
+			List<String> failedModels = results.stream()
+					.filter(r -> r.getError() != null && !r.getError().isEmpty())
+					.map(ModelAnalysisResult::getModelName)
+					.collect(Collectors.toList());
+			
+			if (!succeededModels.isEmpty()) {
+				logger.info("Successfully analyzed with {} model(s): {}", succeededModels.size(), succeededModels);
+			}
+			if (!failedModels.isEmpty()) {
+				logger.warn("Failed to analyze with {} model(s): {}", failedModels.size(), failedModels);
+			}
+			
+			// Check if all models failed
+			long failedCount = results.stream()
+					.filter(r -> r.getError() != null && !r.getError().isEmpty())
+					.count();
+			
+			if (failedCount == results.size()) {
+				// All models failed - return graceful error response
+				logger.error("All {} model analyses failed. Returning default response.", results.size());
+				A2AResponse errorResponse = new A2AResponse();
+				errorResponse.setAnalysis("All model analyses failed. Services may be unavailable.");
+				errorResponse.setRootCause("Unable to connect to analysis services");
+				errorResponse.setRemediation("Please check service availability and retry");
+				errorResponse.setPromote(true); // Safe default: promote on error
+				errorResponse.setConfidence(0);
+				errorResponse.setModelResults(results);
+				
+				// Log which models failed
+				results.forEach(r -> {
+					if (r.getError() != null && !r.getError().isEmpty()) {
+						logger.error("Model {} failed: {}", r.getModelName(), r.getError());
+					}
+				});
+				
+				return ResponseEntity.ok(errorResponse);
+			}
+			
+			// Aggregate results using weighted voting (at least one model succeeded)
 			VotingAggregator.AggregatedResult aggregated = VotingAggregator.aggregate(results);
 			
 			// Build response
@@ -197,6 +240,20 @@ public class A2AController {
 			
 			return ResponseEntity.ok(response);
 			
+		} catch (IllegalArgumentException e) {
+			// Handle "All model analyses failed" exception gracefully
+			if (e.getMessage() != null && e.getMessage().contains("All model analyses failed")) {
+				logger.error("All model analyses failed. Returning default response.");
+				A2AResponse errorResponse = new A2AResponse();
+				errorResponse.setAnalysis("All model analyses failed. Services may be unavailable.");
+				errorResponse.setRootCause("Unable to connect to analysis services");
+				errorResponse.setRemediation("Please check service availability and retry");
+				errorResponse.setPromote(true); // Safe default: promote on error
+				errorResponse.setConfidence(0);
+				return ResponseEntity.ok(errorResponse);
+			}
+			logger.error("Error during multi-model analysis", e);
+			throw new RuntimeException("Multi-model analysis failed", e);
 		} catch (Exception e) {
 			logger.error("Error during multi-model analysis", e);
 			throw new RuntimeException("Multi-model analysis failed", e);

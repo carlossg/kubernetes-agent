@@ -337,35 +337,54 @@ public class A2AController {
 			List<String> responses = RetryHelper.executeWithRetry(() -> {
 				String userId = request.getUserId().trim();
 				
-				// Get or create persistent session for this model/user
-				// We use a composite key of modelName + userId to ensure isolation if multiple users were supported
-				// But for now we just cache by modelName since userId is always "argo-rollouts"
 				String sessionKey = modelName + ":" + userId;
-				Session session = modelSessions.computeIfAbsent(sessionKey, k -> {
-					String sessionName = "a2a-" + modelName + "-" + System.currentTimeMillis();
+				Session session = modelSessions.get(sessionKey);
+				
+				if (session == null) {
+					String sessionName = "a2a-" + modelName + "-" + java.util.UUID.randomUUID().toString();
 					logger.info("Creating new persistent session '{}' for user '{}' and model '{}'", 
 							sessionName, userId, modelName);
-					return analysisRunner.sessionService()
+					session = analysisRunner.sessionService()
 							.createSession(sessionName, userId)
 							.blockingGet();
-				});
+					modelSessions.put(sessionKey, session);
+				}
 
-				Flowable<Event> events = analysisRunner.runAsync(
-						userId,
-						session.id(),
-						userMsg);
+				// Verify session exists
+				try {
+					// We can't easily list sessions, but we can try to get it
+					// If this fails, we know the session is gone, so we should remove it from cache and retry
+					// But we can't easily get by ID without the interface knowledge
+					// So we'll rely on the error handling below
+				} catch (Exception e) {
+					// ignore
+				}
 
-				// Collect results and log tool executions
-				List<String> eventResponses = new ArrayList<>();
-				events.blockingForEach(event -> {
-					KubernetesAgent.logToolExecution(event);
-					String content = event.stringifyContent();
-					if (content != null && !content.isEmpty()) {
-						eventResponses.add(content);
+				try {
+					logger.info("Executing runAsync with session: {} for user: {}", session.id(), userId);
+					Flowable<Event> events = analysisRunner.runAsync(
+							userId,
+							session.id(),
+							userMsg);
+
+					// Collect results and log tool executions
+					List<String> eventResponses = new ArrayList<>();
+					events.blockingForEach(event -> {
+						KubernetesAgent.logToolExecution(event);
+						String content = event.stringifyContent();
+						if (content != null && !content.isEmpty()) {
+							eventResponses.add(content);
+						}
+					});
+					return eventResponses;
+					
+				} catch (Exception e) {
+					if (e.getMessage() != null && e.getMessage().contains("Session not found")) {
+						logger.warn("Session {} not found, invalidating cache and throwing to retry", session.id());
+						modelSessions.remove(sessionKey);
 					}
-				});
-
-				return eventResponses;
+					throw e;
+				}
 			}, "Model analysis: " + modelName);
 
 			// Parse JSON response

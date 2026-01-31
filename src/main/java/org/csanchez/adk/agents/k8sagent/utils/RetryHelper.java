@@ -48,14 +48,20 @@ public class RetryHelper {
 					throw e;
 				}
 				
-				// Check if it's a 429 rate limit error
-				if (is429Error(e)) {
+				// Check if it's a 429 rate limit error or Session not found (retryable)
+				boolean isSessionNotFound = e.getMessage() != null && e.getMessage().contains("Session not found");
+				if (is429Error(e) || isSessionNotFound) {
 					// Extract retry delay from error message if available
 					Duration waitTime = extractRetryDelay(e);
 					if (waitTime != null) {
 						logger.warn("Rate limit exceeded for {}, API suggests waiting {} seconds", 
 							operationName, waitTime.getSeconds());
 						currentBackoff = waitTime;
+					} else if (isSessionNotFound) {
+						logger.warn("Session not found for {} (attempt {}/{}), retrying with new session...", 
+							operationName, attempt, MAX_RETRIES);
+						// Reset backoff for session errors as they might be immediate race conditions
+						currentBackoff = INITIAL_BACKOFF;
 					} else {
 						logger.warn("Rate limit exceeded for {} (attempt {}/{}), using exponential backoff: {} seconds", 
 							operationName, attempt, MAX_RETRIES, currentBackoff.getSeconds());
@@ -101,8 +107,7 @@ public class RetryHelper {
 		}
 		
 		// Check for common service unavailability patterns
-		return message.contains("Session not found") ||
-			message.contains("Connection refused") ||
+		return message.contains("Connection refused") ||
 			message.contains("ConnectException") ||
 			message.contains("UnknownHostException") ||
 			message.contains("SocketTimeoutException") ||

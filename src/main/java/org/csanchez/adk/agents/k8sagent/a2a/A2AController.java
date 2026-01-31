@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -39,6 +40,7 @@ public class A2AController {
 	private static final ExecutorService executorService = Executors.newCachedThreadPool();
 
 	private final InMemoryRunner runner;
+	private final Map<String, InMemoryRunner> modelRunners = new ConcurrentHashMap<>();
 
 	private static Schema createResponseSchema() {
 		try {
@@ -296,37 +298,34 @@ public class A2AController {
 		try {
 			logger.info("Starting analysis with model: {}", modelName);
 			
-			// Create dedicated agent with tools
-			LlmAgent analysisAgent = LlmAgent.builder()
-					.name("a2a-analysis-" + modelName)
-					.model(modelName)
-					.instruction(
-							"""
-									You are a Kubernetes SRE analyzing canary deployments. Use your Kubernetes tools to fetch logs and events.
+			// Get or create cached runner for this model
+			InMemoryRunner analysisRunner = modelRunners.computeIfAbsent(modelName, name -> {
+				// Create dedicated agent with tools
+				LlmAgent analysisAgent = LlmAgent.builder()
+						.name("a2a-analysis-" + name)
+						.model(name)
+						.instruction(
+								"""
+										You are a Kubernetes SRE analyzing canary deployments. Use your Kubernetes tools to fetch logs and events.
 
-									CRITICAL: You MUST respond with valid JSON in this exact format:
-									{
-										"analysis": "detailed analysis text",
-										"rootCause": "identified root cause",
-										"remediation": "suggested remediation steps",
-										"prLink": "github PR link or null",
-										"promote": true or false,
-										"confidence": 0-100
-									}
+										CRITICAL: You MUST respond with valid JSON in this exact format:
+										{
+											"analysis": "detailed analysis text",
+											"rootCause": "identified root cause",
+											"remediation": "suggested remediation steps",
+											"prLink": "github PR link or null",
+											"promote": true or false,
+											"confidence": 0-100
+										}
 
-									Use tools to gather real data, then provide your analysis in the JSON format above.
-									""")
-					.tools((Object[]) KubernetesAgent.K8S_TOOLS.toArray(new BaseTool[0]))
-					.build();
+										Use tools to gather real data, then provide your analysis in the JSON format above.
+										""")
+						.tools((Object[]) KubernetesAgent.K8S_TOOLS.toArray(new BaseTool[0]))
+						.build();
 
-			// Create runner with analysis agent
-			InMemoryRunner analysisRunner = new InMemoryRunner(analysisAgent);
-
-			// Create a unique session for this specific analysis
-			String sessionName = "a2a-analysis-" + System.currentTimeMillis();
-			Session session = analysisRunner.sessionService()
-					.createSession(sessionName, request.getUserId())
-					.blockingGet();
+				// Create runner with analysis agent
+				return new InMemoryRunner(analysisAgent);
+			});
 
 			// Build prompt with context
 			String prompt = buildPrompt(request);
@@ -335,8 +334,24 @@ public class A2AController {
 			// Invoke agent with retry logic
 			Content userMsg = Content.fromParts(Part.fromText(prompt));
 			List<String> responses = RetryHelper.executeWithRetry(() -> {
+				// Create a unique session for this specific analysis
+				// We do this inside the retry loop to handle "Session not found" errors by creating a fresh session
+				String sessionName = "a2a-analysis-" + java.util.UUID.randomUUID().toString();
+				String userId = request.getUserId().trim();
+
+				Session session = analysisRunner.sessionService()
+						.createSession(sessionName, userId)
+						.blockingGet();
+				
+				// Verify session exists before running
+				try {
+					analysisRunner.sessionService().getSession(session.id(), userId).blockingGet();
+				} catch (Exception e) {
+					logger.warn("Session created but verification failed for id: {} user: {}", session.id(), userId);
+				}
+
 				Flowable<Event> events = analysisRunner.runAsync(
-						request.getUserId(),
+						userId,
 						session.id(),
 						userMsg);
 

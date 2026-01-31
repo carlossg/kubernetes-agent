@@ -312,7 +312,13 @@ public class A2AController {
 					modelName, result.isPromote(), result.getConfidence(), result.getExecutionTimeMs());
 			
 		} catch (Exception e) {
-			logger.error("Error running analysis with model: {}", modelName, e);
+			// Check if it's a service unavailability error
+			if (RetryHelper.isServiceUnavailableError(e)) {
+				logger.error("Error running analysis with model: {} - Service unavailable or unreachable: {}", 
+					modelName, e.getMessage());
+			} else {
+				logger.error("Error running analysis with model: {}", modelName, e);
+			}
 			result.setError("Analysis failed: " + e.getMessage());
 			result.setAnalysis("Analysis encountered an error: " + e.getMessage());
 			result.setRootCause("Technical failure during analysis");

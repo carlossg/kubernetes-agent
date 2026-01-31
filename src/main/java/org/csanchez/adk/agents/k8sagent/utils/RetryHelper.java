@@ -42,6 +42,12 @@ public class RetryHelper {
 			} catch (Exception e) {
 				lastException = e;
 				
+				// Check if it's a service unavailability error - don't retry these
+				if (isServiceUnavailableError(e)) {
+					logger.error("Service unavailable for {}: {}", operationName, e.getMessage());
+					throw e;
+				}
+				
 				// Check if it's a 429 rate limit error
 				if (is429Error(e)) {
 					// Extract retry delay from error message if available
@@ -83,6 +89,26 @@ public class RetryHelper {
 		// Max retries exceeded
 		logger.error("Max retries ({}) exceeded for {}", MAX_RETRIES, operationName);
 		throw new RuntimeException("Max retries exceeded after " + attempt + " attempts for " + operationName, lastException);
+	}
+	
+	/**
+	 * Check if the exception indicates a service is unavailable or unreachable
+	 */
+	public static boolean isServiceUnavailableError(Exception e) {
+		String message = e.getMessage();
+		if (message == null) {
+			return false;
+		}
+		
+		// Check for common service unavailability patterns
+		return message.contains("Session not found") ||
+			message.contains("Connection refused") ||
+			message.contains("ConnectException") ||
+			message.contains("UnknownHostException") ||
+			message.contains("SocketTimeoutException") ||
+			message.contains("Service unavailable") ||
+			message.contains("503") ||
+			message.contains("Connection timed out");
 	}
 	
 	/**

@@ -299,12 +299,22 @@ public class A2AController {
 		try {
 			logger.info("Starting analysis with model: {}", modelName);
 			
-			// Get or create cached runner for this model
-			InMemoryRunner analysisRunner = modelRunners.computeIfAbsent(modelName, name -> {
-				// Create dedicated agent with tools
+			// Build prompt with context
+			String prompt = buildPrompt(request);
+			logger.debug("Built prompt for {}: {}", modelName, prompt);
+
+			// Invoke agent with retry logic
+			Content userMsg = Content.fromParts(Part.fromText(prompt));
+			List<String> responses = RetryHelper.executeWithRetry(() -> {
+				String userId = request.getUserId().trim();
+				
+				// Create a fresh agent with UNIQUE name for each request
+				// This allows us to use sessionName = agentName, which seems to be required by InMemoryRunner
+				String uniqueAgentName = "a2a-" + modelName + "-" + java.util.UUID.randomUUID().toString();
+				
 				LlmAgent analysisAgent = LlmAgent.builder()
-						.name("a2a-analysis-" + name)
-						.model(name)
+						.name(uniqueAgentName)
+						.model(modelName)
 						.instruction(
 								"""
 										You are a Kubernetes SRE analyzing canary deployments. Use your Kubernetes tools to fetch logs and events.
@@ -324,67 +334,34 @@ public class A2AController {
 						.tools((Object[]) KubernetesAgent.K8S_TOOLS.toArray(new BaseTool[0]))
 						.build();
 
-				// Create runner with analysis agent
-				return new InMemoryRunner(analysisAgent);
-			});
-
-			// Build prompt with context
-			String prompt = buildPrompt(request);
-			logger.debug("Built prompt for {}: {}", modelName, prompt);
-
-			// Invoke agent with retry logic
-			Content userMsg = Content.fromParts(Part.fromText(prompt));
-			List<String> responses = RetryHelper.executeWithRetry(() -> {
-				String userId = request.getUserId().trim();
+				InMemoryRunner tempRunner = new InMemoryRunner(analysisAgent);
 				
-				String sessionKey = modelName + ":" + userId;
-				Session session = modelSessions.get(sessionKey);
+				// Session name MUST match agent name for InMemoryRunner to find it
+				String sessionName = uniqueAgentName;
+				logger.info("Creating new session '{}' for user '{}' and model '{}'", 
+						sessionName, userId, modelName);
 				
-				if (session == null) {
-					String sessionName = "a2a-" + modelName + "-" + java.util.UUID.randomUUID().toString();
-					logger.info("Creating new persistent session '{}' for user '{}' and model '{}'", 
-							sessionName, userId, modelName);
-					session = analysisRunner.sessionService()
-							.createSession(sessionName, userId)
-							.blockingGet();
-					modelSessions.put(sessionKey, session);
-				}
+				Session session = tempRunner.sessionService()
+						.createSession(sessionName, userId)
+						.blockingGet();
 
-				// Verify session exists
-				try {
-					// We can't easily list sessions, but we can try to get it
-					// If this fails, we know the session is gone, so we should remove it from cache and retry
-					// But we can't easily get by ID without the interface knowledge
-					// So we'll rely on the error handling below
-				} catch (Exception e) {
-					// ignore
-				}
+				logger.info("Executing runAsync with session: {} for user: {}", session.id(), userId);
+				Flowable<Event> events = tempRunner.runAsync(
+						userId,
+						session.id(),
+						userMsg);
 
-				try {
-					logger.info("Executing runAsync with session: {} for user: {}", session.id(), userId);
-					Flowable<Event> events = analysisRunner.runAsync(
-							userId,
-							session.id(),
-							userMsg);
-
-					// Collect results and log tool executions
-					List<String> eventResponses = new ArrayList<>();
-					events.blockingForEach(event -> {
-						KubernetesAgent.logToolExecution(event);
-						String content = event.stringifyContent();
-						if (content != null && !content.isEmpty()) {
-							eventResponses.add(content);
-						}
-					});
-					return eventResponses;
-					
-				} catch (Exception e) {
-					if (e.getMessage() != null && e.getMessage().contains("Session not found")) {
-						logger.warn("Session {} not found, invalidating cache and throwing to retry", session.id());
-						modelSessions.remove(sessionKey);
+				// Collect results and log tool executions
+				List<String> eventResponses = new ArrayList<>();
+				events.blockingForEach(event -> {
+					KubernetesAgent.logToolExecution(event);
+					String content = event.stringifyContent();
+					if (content != null && !content.isEmpty()) {
+						eventResponses.add(content);
 					}
-					throw e;
-				}
+				});
+
+				return eventResponses;
 			}, "Model analysis: " + modelName);
 
 			// Parse JSON response

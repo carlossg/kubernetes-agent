@@ -228,6 +228,33 @@ public class A2AController {
 			// Aggregate results using weighted voting (at least one model succeeded)
 			VotingAggregator.AggregatedResult aggregated = VotingAggregator.aggregate(results);
 			
+			// Log which models were used in decision and which were excluded
+			List<ModelAnalysisResult> validResults = results.stream()
+					.filter(r -> r.getError() == null || r.getError().isEmpty())
+					.collect(Collectors.toList());
+			List<ModelAnalysisResult> invalidResults = results.stream()
+					.filter(r -> r.getError() != null && !r.getError().isEmpty())
+					.collect(Collectors.toList());
+			
+			logger.info("📊 Decision-making summary:");
+			logger.info("   ✅ Models used in decision ({} total):", validResults.size());
+			validResults.forEach(r -> logger.info("      - {}: {} (confidence: {}%)", 
+					r.getModelName(), 
+					r.isPromote() ? "PROMOTE" : "ROLLBACK",
+					r.getConfidence()));
+			
+			if (!invalidResults.isEmpty()) {
+				logger.warn("   ❌ Models EXCLUDED from decision ({} total):", invalidResults.size());
+				invalidResults.forEach(r -> logger.warn("      - {}: {}", 
+						r.getModelName(), 
+						r.getError()));
+			}
+			
+			logger.info("   🎯 Final decision: {} (promote score: {:.2f}, rollback score: {:.2f})", 
+					aggregated.isPromote() ? "PROMOTE" : "ROLLBACK",
+					aggregated.getPromoteScore(),
+					aggregated.getRollbackScore());
+			
 			// Build response
 			A2AResponse response = new A2AResponse();
 			response.setAnalysis(aggregated.getConsolidatedAnalysis());
@@ -384,11 +411,24 @@ public class A2AController {
 		} catch (Exception e) {
 			// Check if it's a service unavailability error
 			if (RetryHelper.isServiceUnavailableError(e)) {
-				logger.error("Error running analysis with model: {} - Service unavailable or unreachable: {}", 
-					modelName, e.getMessage());
+				logger.error("❌ Model {} failed - Service unavailable or unreachable", modelName);
+				logger.error("   Error: {}", e.getMessage());
 			} else {
-				logger.error("Error running analysis with model: {}", modelName, e);
+				logger.error("❌ Model {} analysis failed", modelName);
+				logger.error("   Error type: {}", e.getClass().getSimpleName());
+				logger.error("   Error message: {}", e.getMessage());
+				
+				// Check if this is a tool calling related error
+				String errorMsg = e.getMessage();
+				if (errorMsg != null && (errorMsg.contains("tool") || errorMsg.contains("function") || 
+				                        errorMsg.contains("JSON") || errorMsg.contains("parsing"))) {
+					logger.error("   ⚠️  This appears to be a tool calling failure!");
+					logger.error("   The model likely generated malformed tool calls or invalid JSON.");
+					logger.error("   Recommendation: Use a larger model or reduce tool complexity.");
+				}
 			}
+			
+			// Set error details in result
 			result.setError("Analysis failed: " + e.getMessage());
 			result.setAnalysis("Analysis encountered an error: " + e.getMessage());
 			result.setRootCause("Technical failure during analysis");
@@ -396,6 +436,8 @@ public class A2AController {
 			result.setPromote(true); // Default to promote on error
 			result.setConfidence(0);
 			result.setExecutionTimeMs(System.currentTimeMillis() - startTime);
+			
+			logger.warn("   ⚠️  Model {} will be EXCLUDED from decision-making due to failure", modelName);
 		}
 		
 		return result;

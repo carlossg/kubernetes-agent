@@ -24,6 +24,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
+import static java.util.Spliterators.spliteratorUnknownSize;
+import static java.util.stream.StreamSupport.stream;
+
 /**
  * Custom LLM implementation for vLLM-hosted Gemma models with native OpenAI function calling.
  * 
@@ -109,7 +112,18 @@ public class VllmGemma extends BaseLlm {
 				
 				if (!response.isSuccessful()) {
 					String errorBody = response.body() != null ? response.body().string() : "No error details";
-					logger.error("vLLM API error: {} - {}", response.code(), errorBody);
+					
+					// Enhanced error logging for tool calling failures
+					if (response.code() == 400 && errorBody.contains("tool") || errorBody.contains("function")) {
+						logger.error("❌ Gemma tool calling failure detected!");
+						logger.error("   HTTP Status: {}", response.code());
+						logger.error("   Error details: {}", errorBody);
+						logger.error("   This likely indicates the model generated malformed tool calls.");
+						logger.error("   Consider using a larger model (Gemma 2 9B/27B) or reducing tool complexity.");
+					} else {
+						logger.error("vLLM API error: {} - {}", response.code(), errorBody);
+					}
+					
 					emitter.onError(new IOException("vLLM API error: " + response.code() + " - " + errorBody));
 					return;
 				}
@@ -141,21 +155,35 @@ public class VllmGemma extends BaseLlm {
 
 		// Convert ADK Contents to OpenAI messages format
 		ArrayNode messages = objectMapper.createArrayNode();
+		
 		List<Content> contents = llmRequest.contents();
+
+		// Check if there are any tool messages in the conversation
+		boolean hasToolMessages = contents.stream()
+			.filter(c -> c.parts().isPresent())
+			.flatMap(c -> c.parts().get().stream())
+			.anyMatch(p -> p.functionResponse().isPresent());
+
+		// Prepend System Instructions if present
+		List<String> systemInstructions = llmRequest.getSystemInstructions();
+		if (systemInstructions != null && !systemInstructions.isEmpty()) {
+			ObjectNode systemMsg = objectMapper.createObjectNode();
+			systemMsg.put("role", "system");
+			systemMsg.put("content", String.join("\n", systemInstructions));
+			messages.add(systemMsg);
+		}
 		
 		for (Content content : contents) {
-			ObjectNode message = objectMapper.createObjectNode();
-			
 			// Map role
 			String role = content.role().orElse("user");
 			if (role.equals("model")) {
 				role = "assistant";
 			}
-			message.put("role", role);
 
-			// Extract text and tool calls from parts
+			// Extract text, tool calls, and function responses from parts
 			StringBuilder messageContent = new StringBuilder();
 			ArrayNode toolCalls = null;
+			List<Part> functionResponseParts = new ArrayList<>();
 			
 			if (content.parts().isPresent()) {
 				for (Part part : content.parts().get()) {
@@ -183,37 +211,47 @@ public class VllmGemma extends BaseLlm {
 						toolCall.set("function", function);
 						toolCalls.add(toolCall);
 					}
-					// Handle function response parts
+					// Collect function response parts to add later
 					if (part.functionResponse().isPresent()) {
-						var functionResponse = part.functionResponse().get();
-						// Function responses are added as separate messages with role "tool"
-						String responseName = functionResponse.name().orElse("unknown");
-						ObjectNode toolMessage = objectMapper.createObjectNode();
-						toolMessage.put("role", "tool");
-						toolMessage.put("tool_call_id", "call_" + responseName);
-						try {
-							toolMessage.put("content", objectMapper.writeValueAsString(functionResponse.response()));
-						} catch (Exception e) {
-							logger.warn("Failed to serialize function response", e);
-							toolMessage.put("content", "{}");
-						}
-						messages.add(toolMessage);
+						functionResponseParts.add(part);
 					}
 				}
 			}
 			
-			if (messageContent.length() > 0) {
-				message.put("content", messageContent.toString());
-			} else if (toolCalls != null) {
-				// If only tool calls, content should be empty string (not null for OpenAI compatibility)
-				message.put("content", "");
+			// Add the main message (user/assistant) if it has content or tool calls
+			if (messageContent.length() > 0 || toolCalls != null) {
+				ObjectNode message = objectMapper.createObjectNode();
+				message.put("role", role);
+				
+				if (messageContent.length() > 0) {
+					message.put("content", messageContent.toString());
+				} else if (toolCalls != null) {
+					// If only tool calls, content should be empty string (not null for OpenAI compatibility)
+					message.put("content", "");
+				}
+				
+				if (toolCalls != null && toolCalls.size() > 0) {
+					message.set("tool_calls", toolCalls);
+				}
+				
+				messages.add(message);
 			}
 			
-			if (toolCalls != null && toolCalls.size() > 0) {
-				message.set("tool_calls", toolCalls);
+			// Add function response messages separately AFTER the assistant message
+			for (Part part : functionResponseParts) {
+				var functionResponse = part.functionResponse().get();
+				String responseName = functionResponse.name().orElse("unknown");
+				ObjectNode toolMessage = objectMapper.createObjectNode();
+				toolMessage.put("role", "tool");
+				toolMessage.put("tool_call_id", "call_" + responseName);
+				try {
+					toolMessage.put("content", objectMapper.writeValueAsString(functionResponse.response()));
+				} catch (Exception e) {
+					logger.warn("Failed to serialize function response", e);
+					toolMessage.put("content", "{}");
+				}
+				messages.add(toolMessage);
 			}
-			
-			messages.add(message);
 		}
 		
 		requestBody.set("messages", messages);
@@ -235,6 +273,10 @@ public class VllmGemma extends BaseLlm {
 						try {
 							String schemaJson = fd.parameters().get().toJson();
 							JsonNode schemaNode = objectMapper.readTree(schemaJson);
+							
+							// Fix uppercase types (STRING -> string, OBJECT -> object, etc.)
+							lowercaseSchemaTypes(schemaNode);
+							
 							function.set("parameters", schemaNode);
 						} catch (Exception e) {
 							logger.warn("Failed to convert schema to JSON for tool {}: {}", 
@@ -260,9 +302,15 @@ public class VllmGemma extends BaseLlm {
 			
 			if (toolsArray.size() > 0) {
 				requestBody.set("tools", toolsArray);
-				// Use "required" for Gemma to ensure tool calling (auto doesn't always work reliably)
-				requestBody.put("tool_choice", "required");
-				logger.info("Added {} tools to OpenAI request with tool_choice=required", toolsArray.size());
+				// Only use "required" on first turn (when there are no tool messages in history)
+				// On subsequent turns use "auto" to allow the model to decide whether to call more tools or respond
+				if (hasToolMessages) {
+					requestBody.put("tool_choice", "auto");
+					logger.info("Added {} tools to OpenAI request with tool_choice=auto (subsequent turn)", toolsArray.size());
+				} else {
+					requestBody.put("tool_choice", "required");
+					logger.info("Added {} tools to OpenAI request with tool_choice=required (first turn)", toolsArray.size());
+				}
 			}
 		}
 
@@ -359,6 +407,35 @@ public class VllmGemma extends BaseLlm {
 		} catch (Exception e) {
 			logger.error("Error parsing OpenAI response", e);
 			throw new RuntimeException("Error parsing response", e);
+		}
+	}
+	
+	/**
+	 * Recursively lowercase all "type" values in a JSON schema.
+	 * ADK Schema.toJson() returns uppercase types (STRING, OBJECT, etc.) 
+	 * but OpenAI expects lowercase (string, object, etc.)
+	 */
+	private void lowercaseSchemaTypes(JsonNode node) {
+		if (node == null) {
+			return;
+		}
+		
+		if (node.isObject()) {
+			ObjectNode objNode = (ObjectNode) node;
+			// Check if this node has a "type" field
+			if (objNode.has("type")) {
+				JsonNode typeNode = objNode.get("type");
+				if (typeNode.isTextual()) {
+					String typeValue = typeNode.asText();
+					objNode.put("type", typeValue.toLowerCase());
+				}
+			}
+			// Recursively process all fields
+			objNode.fields().forEachRemaining(entry -> {
+				lowercaseSchemaTypes(entry.getValue());
+			});
+		} else if (node.isArray()) {
+			node.forEach(this::lowercaseSchemaTypes);
 		}
 	}
 

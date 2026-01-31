@@ -61,6 +61,8 @@ spec:
               value: "gemini-2.5-flash,gemma-3-1b-it" # Both Gemini and Gemma
             - name: VOTING_STRATEGY
               value: "weighted" # Confidence-weighted voting
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Djava.net.preferIPv4Stack=true"
           resources:
             requests:
               memory: "512Mi"

@@ -244,6 +244,42 @@ kubectl delete pvc gemma-model-cache -n gemma-system
 kubectl apply -k kubernetes-agent/deployment/gemma/
 ```
 
+## Tool Calling Support
+
+The Gemma deployment is configured with native OpenAI-compatible function calling support:
+
+- ✅ **Auto Tool Choice**: Enabled via `--enable-auto-tool-choice` flag
+- ✅ **Tool Call Parser**: Set to `pythonic` for Gemma 3 models
+- ✅ **OpenAI-Compatible API**: Supports `tools` parameter and `tool_choice` field
+
+This enables the Gemma model to:
+- Accept function/tool definitions via the OpenAI API `tools` parameter
+- Automatically decide when to call tools based on the `tool_choice` field (`auto`, `required`, `none`)
+- Return tool calls in the standard OpenAI format via `tool_calls` in the response
+
+**Example Request:**
+```json
+{
+  "model": "gemma-3-1b-it",
+  "messages": [{"role": "user", "content": "Get pod logs"}],
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "get_pod_logs",
+      "description": "Get logs from a Kubernetes pod",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "namespace": {"type": "string"},
+          "podName": {"type": "string"}
+        }
+      }
+    }
+  }],
+  "tool_choice": "auto"
+}
+```
+
 ## Integration with Kubernetes Agent
 
 To configure the kubernetes-agent to use local Gemma:
@@ -251,14 +287,14 @@ To configure the kubernetes-agent to use local Gemma:
 ```yaml
 env:
   - name: GEMINI_MODEL
-    value: "gemma-1.1-2b-it"
-  - name: GEMINI_API_BASE
-    value: "http://gemma-server.gemma-system.svc.cluster.local:8000/v1"
-  - name: GOOGLE_API_KEY
-    value: "local-not-needed"  # Dummy value for local deployment
+    value: "gemma-3-1b-it"
+  - name: VLLM_API_BASE
+    value: "http://gemma-server.gemma-system.svc.cluster.local:8000"
+  - name: VLLM_API_KEY
+    value: "not-needed"  # Not required for local deployment
 ```
 
-**Note**: Current ADK implementation may require additional configuration for custom endpoints.
+**Note**: The kubernetes-agent's `VllmGemma` implementation uses OpenAI-compatible function calling, which works seamlessly with this configuration.
 
 ## Monitoring
 

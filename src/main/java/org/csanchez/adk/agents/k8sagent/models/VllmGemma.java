@@ -8,7 +8,9 @@ import com.google.adk.models.BaseLlm;
 import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.tools.BaseTool;
 import com.google.genai.types.Content;
+import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Flowable;
 import okhttp3.*;
@@ -16,15 +18,20 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Custom LLM implementation for vLLM-hosted Gemma models.
+ * Custom LLM implementation for vLLM-hosted Gemma models with native OpenAI function calling.
  * 
  * <p>This class wraps vLLM's OpenAI-compatible API to integrate Gemma models
- * with Google's Agent Development Kit (ADK).
+ * with Google's Agent Development Kit (ADK) using native tool calling support.
+ * 
+ * <p>Requires vLLM server to be started with:
+ * --enable-auto-tool-choice --tool-call-parser pythonic
  */
 public class VllmGemma extends BaseLlm {
 
@@ -125,7 +132,7 @@ public class VllmGemma extends BaseLlm {
 	}
 
 	/**
-	 * Converts ADK LlmRequest to OpenAI-compatible JSON format.
+	 * Converts ADK LlmRequest to OpenAI-compatible JSON format with native function calling.
 	 */
 	private ObjectNode buildOpenAiRequest(LlmRequest llmRequest, boolean stream) {
 		ObjectNode requestBody = objectMapper.createObjectNode();
@@ -146,21 +153,118 @@ public class VllmGemma extends BaseLlm {
 			}
 			message.put("role", role);
 
-			// Extract text from parts
+			// Extract text and tool calls from parts
 			StringBuilder messageContent = new StringBuilder();
+			ArrayNode toolCalls = null;
+			
 			if (content.parts().isPresent()) {
 				for (Part part : content.parts().get()) {
 					if (part.text().isPresent()) {
 						messageContent.append(part.text().get());
 					}
-					// TODO: Handle function calls if needed
+					// Handle function call parts (from previous tool calls)
+					if (part.functionCall().isPresent()) {
+						var functionCall = part.functionCall().get();
+						if (toolCalls == null) {
+							toolCalls = objectMapper.createArrayNode();
+						}
+						String functionName = functionCall.name().orElse("unknown");
+						ObjectNode toolCall = objectMapper.createObjectNode();
+						toolCall.put("id", "call_" + functionName);
+						toolCall.put("type", "function");
+						ObjectNode function = objectMapper.createObjectNode();
+						function.put("name", functionName);
+						try {
+							function.put("arguments", objectMapper.writeValueAsString(functionCall.args()));
+						} catch (Exception e) {
+							logger.warn("Failed to serialize function args", e);
+							function.put("arguments", "{}");
+						}
+						toolCall.set("function", function);
+						toolCalls.add(toolCall);
+					}
+					// Handle function response parts
+					if (part.functionResponse().isPresent()) {
+						var functionResponse = part.functionResponse().get();
+						// Function responses are added as separate messages with role "tool"
+						String responseName = functionResponse.name().orElse("unknown");
+						ObjectNode toolMessage = objectMapper.createObjectNode();
+						toolMessage.put("role", "tool");
+						toolMessage.put("tool_call_id", "call_" + responseName);
+						try {
+							toolMessage.put("content", objectMapper.writeValueAsString(functionResponse.response()));
+						} catch (Exception e) {
+							logger.warn("Failed to serialize function response", e);
+							toolMessage.put("content", "{}");
+						}
+						messages.add(toolMessage);
+					}
 				}
 			}
-			message.put("content", messageContent.toString());
+			
+			if (messageContent.length() > 0) {
+				message.put("content", messageContent.toString());
+			} else if (toolCalls != null) {
+				// If only tool calls, content should be empty string (not null for OpenAI compatibility)
+				message.put("content", "");
+			}
+			
+			if (toolCalls != null && toolCalls.size() > 0) {
+				message.set("tool_calls", toolCalls);
+			}
+			
 			messages.add(message);
 		}
 		
 		requestBody.set("messages", messages);
+
+		// Convert tools to OpenAI format if present
+		if (llmRequest.tools() != null && !llmRequest.tools().isEmpty()) {
+			ArrayNode toolsArray = objectMapper.createArrayNode();
+			for (BaseTool tool : llmRequest.tools().values()) {
+				if (tool.declaration().isPresent()) {
+					FunctionDeclaration fd = tool.declaration().get();
+					ObjectNode toolObj = objectMapper.createObjectNode();
+					toolObj.put("type", "function");
+					ObjectNode function = objectMapper.createObjectNode();
+					function.put("name", fd.name().orElse(tool.name()));
+					function.put("description", fd.description().orElse(tool.description()));
+					
+					// Convert Schema to JSON Schema format
+					if (fd.parameters().isPresent()) {
+						try {
+							String schemaJson = fd.parameters().get().toJson();
+							JsonNode schemaNode = objectMapper.readTree(schemaJson);
+							function.set("parameters", schemaNode);
+						} catch (Exception e) {
+							logger.warn("Failed to convert schema to JSON for tool {}: {}", 
+								fd.name().orElse(tool.name()), e.getMessage());
+							// Fallback to empty object schema
+							ObjectNode emptySchema = objectMapper.createObjectNode();
+							emptySchema.put("type", "object");
+							emptySchema.set("properties", objectMapper.createObjectNode());
+							function.set("parameters", emptySchema);
+						}
+					} else {
+						// No parameters - use empty object schema
+						ObjectNode emptySchema = objectMapper.createObjectNode();
+						emptySchema.put("type", "object");
+						emptySchema.set("properties", objectMapper.createObjectNode());
+						function.set("parameters", emptySchema);
+					}
+					
+					toolObj.set("function", function);
+					toolsArray.add(toolObj);
+				}
+			}
+			
+			if (toolsArray.size() > 0) {
+				requestBody.set("tools", toolsArray);
+				// Use "required" for Gemma to ensure tool calling (auto doesn't always work reliably)
+				requestBody.put("tool_choice", "required");
+				logger.info("Added {} tools to OpenAI request with tool_choice=required", toolsArray.size());
+			}
+		}
 
 		// Add generation config if present
 		if (llmRequest.config().isPresent()) {
@@ -182,6 +286,7 @@ public class VllmGemma extends BaseLlm {
 
 	/**
 	 * Parses OpenAI-compatible response into ADK LlmResponse.
+	 * Handles both text responses and native tool_calls from OpenAI format.
 	 */
 	private LlmResponse parseOpenAiResponse(JsonNode jsonResponse) {
 		try {
@@ -192,7 +297,54 @@ public class VllmGemma extends BaseLlm {
 
 			JsonNode firstChoice = choices.get(0);
 			JsonNode message = firstChoice.get("message");
-			String contentText = message.get("content").asText();
+			
+			// Check for native OpenAI tool_calls format first
+			if (message.has("tool_calls") && message.get("tool_calls").isArray() 
+					&& message.get("tool_calls").size() > 0) {
+				
+				List<Part> parts = new ArrayList<>();
+				JsonNode toolCallsArray = message.get("tool_calls");
+				
+				for (JsonNode toolCallNode : toolCallsArray) {
+					String toolName = toolCallNode.get("function").get("name").asText();
+					String argumentsJson = toolCallNode.get("function").get("arguments").asText();
+					
+					try {
+						Map<String, Object> args = objectMapper.readValue(argumentsJson, 
+							objectMapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class));
+						
+						logger.info("Parsed tool call from vLLM native format: {} with args: {}", toolName, args);
+						parts.add(Part.fromFunctionCall(toolName, args));
+						
+					} catch (Exception e) {
+						logger.error("Failed to parse tool call arguments: {}", argumentsJson, e);
+					}
+				}
+				
+				if (!parts.isEmpty()) {
+					return LlmResponse.builder()
+						.content(Content.builder()
+							.role("model")
+							.parts(parts)
+							.build())
+						.build();
+				}
+			}
+			
+			// If no tool calls, process as text response
+			JsonNode contentNode = message.get("content");
+			if (contentNode == null || contentNode.isNull()) {
+				// Empty content, might be error case
+				logger.warn("Received null content from vLLM");
+				return LlmResponse.builder()
+					.content(Content.builder()
+						.role("model")
+						.parts(com.google.common.collect.ImmutableList.of(Part.fromText("")))
+						.build())
+					.build();
+			}
+			
+			String contentText = contentNode.asText();
 
 			// Build ADK response using proper API
 			Content responseContent = Content.builder()

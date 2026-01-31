@@ -113,15 +113,40 @@ public class VllmGemma extends BaseLlm {
 				if (!response.isSuccessful()) {
 					String errorBody = response.body() != null ? response.body().string() : "No error details";
 					
-					// Enhanced error logging for tool calling failures
-					if (response.code() == 400 && errorBody.contains("tool") || errorBody.contains("function")) {
-						logger.error("❌ Gemma tool calling failure detected!");
+					// Enhanced error logging for tool calling/conversation failures
+					boolean isToolRelatedError = response.code() == 400 && (
+						errorBody.contains("tool") || 
+						errorBody.contains("function") ||
+						errorBody.contains("Conversation roles") ||
+						errorBody.contains("alternate") ||
+						errorBody.contains("Grammar error") ||
+						errorBody.contains("JSON") ||
+						errorBody.contains("Invalid type")
+					);
+					
+					if (isToolRelatedError) {
+						logger.error("❌ Gemma tool calling/conversation failure detected!");
 						logger.error("   HTTP Status: {}", response.code());
-						logger.error("   Error details: {}", errorBody);
-						logger.error("   This likely indicates the model generated malformed tool calls.");
-						logger.error("   Consider using a larger model (Gemma 2 9B/27B) or reducing tool complexity.");
+						logger.error("   Error from vLLM: {}", errorBody);
+						logger.error("   📋 Full request details are logged at DEBUG level (search for 'Sending request to vLLM')");
+						logger.error("   🔍 What happened:");
+						if (errorBody.contains("Conversation roles")) {
+							logger.error("     - Conversation roles are not alternating correctly");
+							logger.error("     - This usually happens when tool responses are malformed");
+							logger.error("     - Check for 'Failed to serialize function response' warnings above");
+						} else if (errorBody.contains("Grammar error") || errorBody.contains("Invalid type")) {
+							logger.error("     - Schema type validation failed (likely uppercase types not converted)");
+						} else if (errorBody.contains("JSON")) {
+							logger.error("     - Invalid JSON in tool calls or responses");
+						} else {
+							logger.error("     - Tool calling format issue detected");
+						}
+						logger.error("   💡 Recommendation: Use a larger model (Gemma 2 9B/27B) or reduce tool complexity");
 					} else {
 						logger.error("vLLM API error: {} - {}", response.code(), errorBody);
+						if (response.code() == 400) {
+							logger.error("   📋 Full request details available at DEBUG level");
+						}
 					}
 					
 					emitter.onError(new IOException("vLLM API error: " + response.code() + " - " + errorBody));
@@ -361,11 +386,11 @@ public class VllmGemma extends BaseLlm {
 						Map<String, Object> args = objectMapper.readValue(argumentsJson, 
 							objectMapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class));
 						
-						logger.info("Parsed tool call from vLLM native format: {} with args: {}", toolName, args);
+						logger.info("✅ Gemma successfully called tool: {} with args: {}", toolName, args);
 						parts.add(Part.fromFunctionCall(toolName, args));
 						
 					} catch (Exception e) {
-						logger.error("Failed to parse tool call arguments: {}", argumentsJson, e);
+						logger.error("❌ Failed to parse tool call arguments from Gemma: {}", argumentsJson, e);
 					}
 				}
 				
@@ -383,7 +408,7 @@ public class VllmGemma extends BaseLlm {
 			JsonNode contentNode = message.get("content");
 			if (contentNode == null || contentNode.isNull()) {
 				// Empty content, might be error case
-				logger.warn("Received null content from vLLM");
+				logger.warn("⚠️  Received null/empty content from Gemma (no tool calls, no text)");
 				return LlmResponse.builder()
 					.content(Content.builder()
 						.role("model")
@@ -393,6 +418,10 @@ public class VllmGemma extends BaseLlm {
 			}
 			
 			String contentText = contentNode.asText();
+			if (contentText != null && !contentText.isEmpty()) {
+				logger.info("📝 Gemma returned text response (no tool calls): {}", 
+					contentText.length() > 200 ? contentText.substring(0, 200) + "..." : contentText);
+			}
 
 			// Build ADK response using proper API
 			Content responseContent = Content.builder()

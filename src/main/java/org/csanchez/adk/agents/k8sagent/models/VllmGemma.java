@@ -18,6 +18,7 @@ import io.reactivex.rxjava3.core.Flowable;
 import okhttp3.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -44,6 +45,9 @@ public class VllmGemma extends BaseLlm {
 	private static final ObjectMapper objectMapper = new ObjectMapper()
 			.registerModule(new Jdk8Module());
 	private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+	
+	// Maximum characters per tool response to avoid exceeding Gemma's 8K context limit
+	private static final int MAX_TOOL_RESPONSE_LENGTH = 1500;
 
 	private final String apiBaseUrl;
 	private final OkHttpClient httpClient;
@@ -77,6 +81,9 @@ public class VllmGemma extends BaseLlm {
 
 	@Override
 	public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
+		// Set MDC context from model name for structured logging
+		MDC.put("model", model());
+		
 		try {
 			// Convert ADK LlmRequest to OpenAI-compatible format
 			ObjectNode requestBody = buildOpenAiRequest(llmRequest, stream);
@@ -105,11 +112,16 @@ public class VllmGemma extends BaseLlm {
 		} catch (Exception e) {
 			logger.error("Error generating content from vLLM", e);
 			return Flowable.error(e);
+		} finally {
+			MDC.remove("model");
 		}
 	}
 
 	private Flowable<LlmResponse> generateNonStreaming(Request request) {
 		return Flowable.create(emitter -> {
+			// Set MDC for this execution context
+			MDC.put("model", model());
+			
 			try {
 				Response response = httpClient.newCall(request).execute();
 				
@@ -128,27 +140,27 @@ public class VllmGemma extends BaseLlm {
 					);
 					
 					if (isToolRelatedError) {
-						logger.error("❌ Gemma tool calling/conversation failure detected!");
-						logger.error("   HTTP Status: {}", response.code());
-						logger.error("   Error from vLLM: {}", errorBody);
-						logger.error("   📋 Full request details are logged at DEBUG level (search for 'Sending request to vLLM')");
-						logger.error("   🔍 What happened:");
+						logger.error("Tool calling/conversation failure detected!");
+						logger.error("HTTP Status: {}", response.code());
+						logger.error("Error from vLLM: {}", errorBody);
+						logger.error("Full request details are logged at DEBUG level (search for 'Sending request to vLLM')");
+						logger.error("What happened:");
 						if (errorBody.contains("Conversation roles")) {
-							logger.error("     - Conversation roles are not alternating correctly");
-							logger.error("     - This usually happens when tool responses are malformed");
-							logger.error("     - Check for 'Failed to serialize function response' warnings above");
+							logger.error("- Conversation roles are not alternating correctly");
+							logger.error("- This usually happens when tool responses are malformed");
+							logger.error("- Check for 'Failed to serialize function response' warnings above");
 						} else if (errorBody.contains("Grammar error") || errorBody.contains("Invalid type")) {
-							logger.error("     - Schema type validation failed (likely uppercase types not converted)");
+							logger.error("- Schema type validation failed (likely uppercase types not converted)");
 						} else if (errorBody.contains("JSON")) {
-							logger.error("     - Invalid JSON in tool calls or responses");
+							logger.error("- Invalid JSON in tool calls or responses");
 						} else {
-							logger.error("     - Tool calling format issue detected");
+							logger.error("- Tool calling format issue detected");
 						}
-						logger.error("   💡 Recommendation: Use a larger model (Gemma 2 9B/27B) or reduce tool complexity");
+						logger.error("Recommendation: Use a larger model (Gemma 2 9B/27B) or reduce tool complexity");
 					} else {
-						logger.error("vLLM API error: {} - {}", response.code(), errorBody);
+						logger.error("vLLM API error code={} body={}", response.code(), errorBody);
 						if (response.code() == 400) {
-							logger.error("   📋 Full request details available at DEBUG level");
+							logger.error("Full request details available at DEBUG level");
 						}
 					}
 					
@@ -169,6 +181,8 @@ public class VllmGemma extends BaseLlm {
 			} catch (Exception e) {
 				logger.error("Error processing vLLM response", e);
 				emitter.onError(e);
+			} finally {
+				MDC.remove("model");
 			}
 		}, io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
 	}
@@ -268,7 +282,9 @@ public class VllmGemma extends BaseLlm {
 					String responseName = functionResponse.name().orElse("unknown");
 					try {
 						String responseJson = objectMapper.writeValueAsString(functionResponse.response());
-						pendingToolResponses.add(String.format("Tool '%s' returned: %s", responseName, responseJson));
+						// Truncate large responses to avoid exceeding Gemma's context limit
+						String truncatedResponse = truncateToolResponse(responseJson, responseName);
+						pendingToolResponses.add(String.format("Tool '%s' returned: %s", responseName, truncatedResponse));
 					} catch (Exception e) {
 						logger.warn("Failed to serialize function response for {}: {}", responseName, e.getMessage());
 						pendingToolResponses.add(String.format("Tool '%s' returned: {}", responseName));
@@ -471,7 +487,7 @@ public class VllmGemma extends BaseLlm {
 					String dedupeKey = toolName + "|" + argumentsJson;
 					if (seenToolCalls.contains(dedupeKey)) {
 						duplicateCount++;
-						logger.debug("⏭️  Skipping duplicate tool call: {} with args: {}", toolName, argumentsJson);
+						logger.debug("Skipping duplicate tool call toolName={} args={}", toolName, argumentsJson);
 						continue;
 					}
 					seenToolCalls.add(dedupeKey);
@@ -480,7 +496,7 @@ public class VllmGemma extends BaseLlm {
 						Map<String, Object> args = objectMapper.readValue(argumentsJson, 
 							objectMapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class));
 						
-						logger.info("✅ Gemma successfully called tool: {} with args: {}", toolName, args);
+						logger.info("Successfully called tool toolName={} args={}", toolName, args);
 						// Use FunctionCall.builder() to preserve the tool call ID from vLLM
 						parts.add(Part.builder()
 							.functionCall(FunctionCall.builder()
@@ -491,12 +507,12 @@ public class VllmGemma extends BaseLlm {
 							.build());
 						
 					} catch (Exception e) {
-						logger.error("❌ Failed to parse tool call arguments from Gemma: {}", argumentsJson, e);
+						logger.error("Failed to parse tool call arguments argumentsJson={}", argumentsJson, e);
 					}
 				}
 				
 				if (duplicateCount > 0) {
-					logger.info("🔄 Deduplicated {} duplicate tool calls from Gemma (kept {} unique)", 
+					logger.info("Deduplicated {} duplicate tool calls (kept {} unique)", 
 						duplicateCount, parts.size());
 				}
 				
@@ -514,7 +530,7 @@ public class VllmGemma extends BaseLlm {
 			JsonNode contentNode = message.get("content");
 			if (contentNode == null || contentNode.isNull()) {
 				// Empty content, might be error case
-				logger.warn("⚠️  Received null/empty content from Gemma (no tool calls, no text)");
+				logger.warn("Received null/empty content (no tool calls, no text)");
 				return LlmResponse.builder()
 					.content(Content.builder()
 						.role("model")
@@ -525,8 +541,7 @@ public class VllmGemma extends BaseLlm {
 			
 			String contentText = contentNode.asText();
 			if (contentText != null && !contentText.isEmpty()) {
-				logger.info("📝 Gemma returned text response (no tool calls): {}", 
-					contentText.length() > 200 ? contentText.substring(0, 200) + "..." : contentText);
+				logger.info("Returned text response (no tool calls) length={}", contentText.length());
 			}
 
 			// Build ADK response using proper API
@@ -571,6 +586,76 @@ public class VllmGemma extends BaseLlm {
 			});
 		} else if (node.isArray()) {
 			node.forEach(this::lowercaseSchemaTypes);
+		}
+	}
+
+	/**
+	 * Truncates tool responses to avoid exceeding Gemma's context limit.
+	 * Intelligently summarizes JSON responses by keeping key fields and truncating arrays.
+	 */
+	private String truncateToolResponse(String responseJson, String toolName) {
+		if (responseJson == null || responseJson.length() <= MAX_TOOL_RESPONSE_LENGTH) {
+			return responseJson;
+		}
+		
+		try {
+			JsonNode node = objectMapper.readTree(responseJson);
+			
+			// For events/pods responses, limit the number of items in arrays
+			if (node.isObject()) {
+				ObjectNode objNode = (ObjectNode) node;
+				
+				// Handle 'events' array - keep only first 5 events
+				if (objNode.has("events") && objNode.get("events").isArray()) {
+					ArrayNode events = (ArrayNode) objNode.get("events");
+					if (events.size() > 5) {
+						ArrayNode truncatedEvents = objectMapper.createArrayNode();
+						for (int i = 0; i < 5; i++) {
+							truncatedEvents.add(events.get(i));
+						}
+						objNode.set("events", truncatedEvents);
+						objNode.put("eventCount", events.size());
+						objNode.put("_truncated", true);
+						objNode.put("_message", "Showing first 5 of " + events.size() + " events");
+					}
+				}
+				
+				// Handle 'pods' array - keep only first 10 pods
+				if (objNode.has("pods") && objNode.get("pods").isArray()) {
+					ArrayNode pods = (ArrayNode) objNode.get("pods");
+					if (pods.size() > 10) {
+						ArrayNode truncatedPods = objectMapper.createArrayNode();
+						for (int i = 0; i < 10; i++) {
+							truncatedPods.add(pods.get(i));
+						}
+						objNode.set("pods", truncatedPods);
+						objNode.put("_truncated", true);
+						objNode.put("_message", "Showing first 10 of " + pods.size() + " pods");
+					}
+				}
+				
+				// Handle 'logs' field - truncate long log strings
+				if (objNode.has("logs") && objNode.get("logs").isTextual()) {
+					String logs = objNode.get("logs").asText();
+					if (logs.length() > 500) {
+						objNode.put("logs", logs.substring(0, 500) + "... [truncated, " + logs.length() + " chars total]");
+					}
+				}
+				
+				String result = objectMapper.writeValueAsString(objNode);
+				if (result.length() <= MAX_TOOL_RESPONSE_LENGTH) {
+					logger.debug("Truncated {} response from {} to {} chars", toolName, responseJson.length(), result.length());
+					return result;
+				}
+			}
+			
+			// If still too long after smart truncation, do simple truncation
+			logger.debug("Simple truncation for {} response: {} -> {} chars", toolName, responseJson.length(), MAX_TOOL_RESPONSE_LENGTH);
+			return responseJson.substring(0, MAX_TOOL_RESPONSE_LENGTH) + "... [truncated]";
+			
+		} catch (Exception e) {
+			logger.warn("Failed to truncate tool response for {}, using simple truncation", toolName);
+			return responseJson.substring(0, Math.min(responseJson.length(), MAX_TOOL_RESPONSE_LENGTH)) + "... [truncated]";
 		}
 	}
 

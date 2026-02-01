@@ -1,6 +1,7 @@
 package org.csanchez.adk.agents.k8sagent.a2a;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.events.Event;
 import com.google.adk.runner.InMemoryRunner;
@@ -36,7 +37,8 @@ import java.util.stream.Collectors;
 public class A2AController {
 
 	private static final Logger logger = LoggerFactory.getLogger(A2AController.class);
-	private static final ObjectMapper objectMapper = new ObjectMapper();
+	private static final ObjectMapper objectMapper = new ObjectMapper()
+			.registerModule(new Jdk8Module());
 	private static final ExecutorService executorService = Executors.newCachedThreadPool();
 
 	private final InMemoryRunner runner;

@@ -4,12 +4,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.google.adk.models.BaseLlm;
 import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.tools.BaseTool;
 import com.google.genai.types.Content;
+import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Flowable;
@@ -39,7 +41,8 @@ import static java.util.stream.StreamSupport.stream;
 public class VllmGemma extends BaseLlm {
 
 	private static final Logger logger = LoggerFactory.getLogger(VllmGemma.class);
-	private static final ObjectMapper objectMapper = new ObjectMapper();
+	private static final ObjectMapper objectMapper = new ObjectMapper()
+			.registerModule(new Jdk8Module());
 	private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
 	private final String apiBaseUrl;
@@ -172,6 +175,10 @@ public class VllmGemma extends BaseLlm {
 
 	/**
 	 * Converts ADK LlmRequest to OpenAI-compatible JSON format with native function calling.
+	 * 
+	 * IMPORTANT: vLLM with Gemma models does NOT support the "tool" role message format.
+	 * Instead, tool responses must be formatted as a "user" message containing the results.
+	 * This is because Gemma's chat template expects strict user/assistant alternation.
 	 */
 	private ObjectNode buildOpenAiRequest(LlmRequest llmRequest, boolean stream) {
 		ObjectNode requestBody = objectMapper.createObjectNode();
@@ -198,6 +205,13 @@ public class VllmGemma extends BaseLlm {
 			messages.add(systemMsg);
 		}
 		
+		// Track the last message role to ensure proper alternation
+		String lastRole = systemInstructions != null && !systemInstructions.isEmpty() ? "system" : null;
+		
+		// Collect all function responses to format them as a single user message
+		// This is required because vLLM/Gemma doesn't support the "tool" role
+		List<String> pendingToolResponses = new ArrayList<>();
+		
 		for (Content content : contents) {
 			// Map role
 			String role = content.role().orElse("user");
@@ -222,8 +236,10 @@ public class VllmGemma extends BaseLlm {
 							toolCalls = objectMapper.createArrayNode();
 						}
 						String functionName = functionCall.name().orElse("unknown");
+						// Use the actual tool call ID from vLLM if available, otherwise generate one
+						String toolCallId = functionCall.id().orElse("call_" + functionName);
 						ObjectNode toolCall = objectMapper.createObjectNode();
-						toolCall.put("id", "call_" + functionName);
+						toolCall.put("id", toolCallId);
 						toolCall.put("type", "function");
 						ObjectNode function = objectMapper.createObjectNode();
 						function.put("name", functionName);
@@ -236,47 +252,107 @@ public class VllmGemma extends BaseLlm {
 						toolCall.set("function", function);
 						toolCalls.add(toolCall);
 					}
-					// Collect function response parts to add later
+					// Collect function response parts to format as user message
 					if (part.functionResponse().isPresent()) {
 						functionResponseParts.add(part);
 					}
 				}
 			}
 			
-			// Add the main message (user/assistant) if it has content or tool calls
-			if (messageContent.length() > 0 || toolCalls != null) {
-				ObjectNode message = objectMapper.createObjectNode();
-				message.put("role", role);
-				
-				if (messageContent.length() > 0) {
-					message.put("content", messageContent.toString());
-				} else if (toolCalls != null) {
-					// If only tool calls, content should be empty string (not null for OpenAI compatibility)
-					message.put("content", "");
+			// If this Content has function responses, collect them for a user message
+			// vLLM/Gemma doesn't support the "tool" role, so we format tool responses
+			// as a user message instead
+			if (!functionResponseParts.isEmpty()) {
+				for (Part part : functionResponseParts) {
+					var functionResponse = part.functionResponse().get();
+					String responseName = functionResponse.name().orElse("unknown");
+					try {
+						String responseJson = objectMapper.writeValueAsString(functionResponse.response());
+						pendingToolResponses.add(String.format("Tool '%s' returned: %s", responseName, responseJson));
+					} catch (Exception e) {
+						logger.warn("Failed to serialize function response for {}: {}", responseName, e.getMessage());
+						pendingToolResponses.add(String.format("Tool '%s' returned: {}", responseName));
+					}
+				}
+				// Skip adding a tool message - we'll add a user message with all responses later
+			} else {
+				// Before adding a user/assistant message, flush any pending tool responses
+				if (!pendingToolResponses.isEmpty() && (role.equals("user") || role.equals("assistant"))) {
+					// Add a user message with all collected tool responses
+					ObjectNode toolResultsMessage = objectMapper.createObjectNode();
+					toolResultsMessage.put("role", "user");
+					StringBuilder toolResultsContent = new StringBuilder();
+					toolResultsContent.append("Here are the results from the tools you called:\n\n");
+					for (String response : pendingToolResponses) {
+						toolResultsContent.append(response).append("\n\n");
+					}
+					toolResultsContent.append("Based on these results, please provide your analysis in the required JSON format.");
+					toolResultsMessage.put("content", toolResultsContent.toString());
+					messages.add(toolResultsMessage);
+					lastRole = "user";
+					pendingToolResponses.clear();
+					logger.debug("Added user message with {} tool responses", pendingToolResponses.size());
 				}
 				
-				if (toolCalls != null && toolCalls.size() > 0) {
-					message.set("tool_calls", toolCalls);
+				// Add the main message (user/assistant) if it has content or tool calls
+				if (messageContent.length() > 0 || toolCalls != null) {
+					// Skip user message if we just added a tool results user message
+					if (role.equals("user") && "user".equals(lastRole)) {
+						logger.debug("Skipping consecutive user message to maintain alternation");
+						continue;
+					}
+					
+					ObjectNode message = objectMapper.createObjectNode();
+					message.put("role", role);
+					
+					// For assistant messages with tool_calls, we need special handling
+					// Since we're converting tool responses to user messages, we should
+					// represent the assistant's tool calls as a description of what it did
+					if (role.equals("assistant") && toolCalls != null && toolCalls.size() > 0) {
+						// Convert tool calls to a text description instead of tool_calls format
+						// This is needed because vLLM/Gemma doesn't support tool role messages
+						StringBuilder assistantText = new StringBuilder();
+						if (messageContent.length() > 0) {
+							assistantText.append(messageContent.toString()).append("\n\n");
+						}
+						assistantText.append("I'll use the following tools to analyze: ");
+						List<String> toolNames = new ArrayList<>();
+						for (int i = 0; i < toolCalls.size(); i++) {
+							JsonNode tc = toolCalls.get(i);
+							String name = tc.get("function").get("name").asText();
+							if (!toolNames.contains(name)) {
+								toolNames.add(name);
+							}
+						}
+						assistantText.append(String.join(", ", toolNames));
+						message.put("content", assistantText.toString());
+						// Do NOT add tool_calls since we're using user messages for responses
+						logger.debug("Converted {} tool calls to assistant text for vLLM compatibility", toolCalls.size());
+					} else if (messageContent.length() > 0) {
+						message.put("content", messageContent.toString());
+					} else {
+						message.put("content", "");
+					}
+					
+					messages.add(message);
+					lastRole = role;
 				}
-				
-				messages.add(message);
 			}
-			
-			// Add function response messages separately AFTER the assistant message
-			for (Part part : functionResponseParts) {
-				var functionResponse = part.functionResponse().get();
-				String responseName = functionResponse.name().orElse("unknown");
-				ObjectNode toolMessage = objectMapper.createObjectNode();
-				toolMessage.put("role", "tool");
-				toolMessage.put("tool_call_id", "call_" + responseName);
-				try {
-					toolMessage.put("content", objectMapper.writeValueAsString(functionResponse.response()));
-				} catch (Exception e) {
-					logger.warn("Failed to serialize function response", e);
-					toolMessage.put("content", "{}");
-				}
-				messages.add(toolMessage);
+		}
+		
+		// Flush any remaining pending tool responses at the end
+		if (!pendingToolResponses.isEmpty()) {
+			ObjectNode toolResultsMessage = objectMapper.createObjectNode();
+			toolResultsMessage.put("role", "user");
+			StringBuilder toolResultsContent = new StringBuilder();
+			toolResultsContent.append("Here are the results from the tools you called:\n\n");
+			for (String response : pendingToolResponses) {
+				toolResultsContent.append(response).append("\n\n");
 			}
+			toolResultsContent.append("Based on these results, please provide your analysis in the required JSON format.");
+			toolResultsMessage.put("content", toolResultsContent.toString());
+			messages.add(toolResultsMessage);
+			logger.info("Added final user message with {} tool responses for vLLM/Gemma compatibility", pendingToolResponses.size());
 		}
 		
 		requestBody.set("messages", messages);
@@ -360,6 +436,10 @@ public class VllmGemma extends BaseLlm {
 	/**
 	 * Parses OpenAI-compatible response into ADK LlmResponse.
 	 * Handles both text responses and native tool_calls from OpenAI format.
+	 * 
+	 * IMPORTANT: Gemma 1B often generates duplicate tool calls. This method
+	 * deduplicates tool calls based on function name + arguments to avoid
+	 * calling the same tool multiple times with identical parameters.
 	 */
 	private LlmResponse parseOpenAiResponse(JsonNode jsonResponse) {
 		try {
@@ -378,20 +458,46 @@ public class VllmGemma extends BaseLlm {
 				List<Part> parts = new ArrayList<>();
 				JsonNode toolCallsArray = message.get("tool_calls");
 				
+				// Track unique tool calls to deduplicate (Gemma often generates duplicates)
+				java.util.Set<String> seenToolCalls = new java.util.HashSet<>();
+				int duplicateCount = 0;
+				
 				for (JsonNode toolCallNode : toolCallsArray) {
+					String toolCallId = toolCallNode.get("id").asText(); // Preserve vLLM's tool call ID
 					String toolName = toolCallNode.get("function").get("name").asText();
 					String argumentsJson = toolCallNode.get("function").get("arguments").asText();
+					
+					// Create a unique key for deduplication
+					String dedupeKey = toolName + "|" + argumentsJson;
+					if (seenToolCalls.contains(dedupeKey)) {
+						duplicateCount++;
+						logger.debug("⏭️  Skipping duplicate tool call: {} with args: {}", toolName, argumentsJson);
+						continue;
+					}
+					seenToolCalls.add(dedupeKey);
 					
 					try {
 						Map<String, Object> args = objectMapper.readValue(argumentsJson, 
 							objectMapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class));
 						
 						logger.info("✅ Gemma successfully called tool: {} with args: {}", toolName, args);
-						parts.add(Part.fromFunctionCall(toolName, args));
+						// Use FunctionCall.builder() to preserve the tool call ID from vLLM
+						parts.add(Part.builder()
+							.functionCall(FunctionCall.builder()
+								.id(toolCallId)
+								.name(toolName)
+								.args(args)
+								.build())
+							.build());
 						
 					} catch (Exception e) {
 						logger.error("❌ Failed to parse tool call arguments from Gemma: {}", argumentsJson, e);
 					}
+				}
+				
+				if (duplicateCount > 0) {
+					logger.info("🔄 Deduplicated {} duplicate tool calls from Gemma (kept {} unique)", 
+						duplicateCount, parts.size());
 				}
 				
 				if (!parts.isEmpty()) {

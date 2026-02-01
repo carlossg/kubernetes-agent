@@ -4,30 +4,38 @@
 set -e
 
 # Configuration
-AGENT_IMAGE="ghcr.io/carlossg/kubernetes-agent:multi-model-test"
 GEMMA_NAMESPACE="gemma-system"
 GEMMA_SERVICE="gemma-server"
 GEMMA_PORT="8000"
 AGENT_PORT="8080"
-VLLM_API_BASE="http://host.docker.internal:${GEMMA_PORT}"
 TEST_PROMPT="Analyze a canary pod with database connection errors and high latency"
-TEST_CONTEXT='{"namespace": "rollouts-test-system", "rolloutName": "canary-demo", "stableSelector": "role=stable", "canarySelector": "role=canary"}'
+TEST_CONTEXT='{"namespace": "default", "rolloutName": "canary-demo", "stableSelector": "role=stable", "canarySelector": "role=canary"}'
 
 echo "=================================================="
 echo "Multi-Model Analysis Test Script"
 echo "=================================================="
 echo ""
 
-echo "--- Building Docker image for Kubernetes Agent ---"
-docker build -t "${AGENT_IMAGE}" .
+# Cleanup function
+cleanup() {
+	echo ""
+	echo "--- Cleaning up ---"
+	if [ ! -z "$AGENT_PID" ]; then
+		echo "Stopping agent (PID: $AGENT_PID)..."
+		kill "$AGENT_PID" 2>/dev/null || true
+	fi
+	if [ ! -z "$PF_PID" ]; then
+		kill "$PF_PID" 2>/dev/null || true
+	fi
+}
+trap cleanup EXIT
 
-echo ""
 echo "--- Starting port-forward to Gemma server in GKE ---"
 # Find an available port for port-forwarding
 PF_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
 echo "Using port ${PF_PORT} for port-forward"
 
-kubectl port-forward -n "${GEMMA_NAMESPACE}" svc/"${GEMMA_SERVICE}" "${PF_PORT}":"${GEMMA_PORT}" &
+kubectl port-forward -n "${GEMMA_NAMESPACE}" svc/"${GEMMA_SERVICE}" "${PF_PORT}":"${GEMMA_PORT}" >/dev/null 2>&1 &
 PF_PID=$!
 echo "Port-forward started with PID ${PF_PID}"
 
@@ -36,23 +44,52 @@ sleep 5
 
 echo ""
 echo "--- Running Kubernetes Agent with Multi-Model Configuration ---"
-docker run --rm -d \
-	--name k8s-agent-multi-model-test \
-	-p "${AGENT_PORT}":"${AGENT_PORT}" \
-	-e ENABLE_MULTI_MODEL="true" \
-	-e MODELS_TO_USE="gemini-2.5-flash,gemma-3-1b-it" \
-	-e GEMINI_MODEL="gemini-2.5-flash" \
-	-e VLLM_MODEL="gemma-3-1b-it" \
-	-e VLLM_API_BASE="http://host.docker.internal:${PF_PORT}" \
-	-e VLLM_API_KEY="not-needed" \
-	-e GOOGLE_API_KEY="${GOOGLE_API_KEY}" \
-	-e VOTING_STRATEGY="weighted" \
-	--add-host host.docker.internal:host-gateway \
-	"${AGENT_IMAGE}"
+# Set environment variables for multi-model configuration
+export ENABLE_MULTI_MODEL="true"
+export MODELS_TO_USE="gemini-2.5-flash,gemma-3-1b-it"
+export GEMINI_MODEL="gemini-2.5-flash"
+export VLLM_MODEL="gemma-3-1b-it"
+export VLLM_API_BASE="http://localhost:${PF_PORT}"
+export VLLM_API_KEY="not-needed"
+export GOOGLE_API_KEY="${GOOGLE_API_KEY}"
+export VOTING_STRATEGY="weighted"
 
-# Wait for agent to start
+# Run the agent locally using Maven
+mvn -q spring-boot:run \
+	-Dspring-boot.run.arguments="--server.port=${AGENT_PORT}" \
+	-Dspring.main.banner-mode=off \
+	-Dspring-boot.run.jvmArguments="-Djava.net.preferIPv4Stack=true" \
+	> agent.log 2>&1 &
+AGENT_PID=$!
+
+echo "Agent starting with PID ${AGENT_PID}..."
 echo "Waiting for agent to initialize..."
-sleep 15
+
+# Wait for agent to start by checking logs
+max_retries=30
+count=0
+started=false
+while [ $count -lt $max_retries ]; do
+	if grep -q "Started KubernetesAgentApplication" agent.log 2>/dev/null; then
+		started=true
+		break
+	fi
+	if ! ps -p "$AGENT_PID" > /dev/null 2>&1; then
+		echo "❌ Agent process died!"
+		cat agent.log
+		exit 1
+	fi
+	sleep 2
+	count=$((count+1))
+	echo -n "."
+done
+echo ""
+
+if [ "$started" = false ]; then
+	echo "❌ Agent failed to start in time."
+	cat agent.log
+	exit 1
+fi
 
 echo ""
 echo "--- Checking agent health endpoint ---"
@@ -141,21 +178,15 @@ else
 fi
 
 echo ""
-echo "--- Cleaning up ---"
-docker stop k8s-agent-multi-model-test || true
-kill "${PF_PID}" 2>/dev/null || true
-
-echo ""
 echo "=================================================="
 echo "✅ Multi-Model Analysis Test Summary"
 echo "=================================================="
-echo "1. Built Docker image: SUCCESS"
-echo "2. Started Gemma server port-forward: SUCCESS"
-echo "3. Started agent with multi-model config: SUCCESS"
-echo "4. Agent queried multiple models: SUCCESS (${MODEL_COUNT} models)"
-echo "5. Confidence-weighted voting: SUCCESS"
-echo "6. Voting rationale generated: SUCCESS"
-echo "7. Final decision matches weighted score: SUCCESS"
+echo "1. Started Gemma server port-forward: SUCCESS"
+echo "2. Started agent locally with multi-model config: SUCCESS"
+echo "3. Agent queried multiple models: SUCCESS (${MODEL_COUNT} models)"
+echo "4. Confidence-weighted voting: SUCCESS"
+echo "5. Voting rationale generated: SUCCESS"
+echo "6. Final decision matches weighted score: SUCCESS"
 echo ""
 echo "Multi-model parallel analysis is working correctly!"
 echo "=================================================="

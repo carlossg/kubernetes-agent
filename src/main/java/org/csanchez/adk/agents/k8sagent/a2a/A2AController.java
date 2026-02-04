@@ -15,6 +15,7 @@ import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Flowable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -161,7 +162,9 @@ public class A2AController {
 	 * Analyze with multiple models in parallel and aggregate results
 	 */
 	private ResponseEntity<A2AResponse> analyzeWithMultipleModels(A2ARequest request, List<String> models) {
-		logger.info("Running parallel analysis with {} models", models.size());
+		long multiModelStartTime = System.currentTimeMillis();
+		logger.info("Running parallel analysis with {} models: {} startTime={}", 
+				models.size(), models, multiModelStartTime);
 		
 		// Run analyses in parallel
 		List<CompletableFuture<ModelAnalysisResult>> futures = models.stream()
@@ -177,12 +180,16 @@ public class A2AController {
 		try {
 			allOf.join(); // Wait for all futures to complete
 			
+			long allModelsCompleteTime = System.currentTimeMillis();
+			logger.info("All model API calls completed totalTimeMs={}", allModelsCompleteTime - multiModelStartTime);
+			
 			// Collect results
 			List<ModelAnalysisResult> results = futures.stream()
 					.map(CompletableFuture::join)
 					.collect(Collectors.toList());
 			
-			logger.info("All {} model analyses completed", results.size());
+			logger.info("All {} model analyses completed totalTimeMs={}", 
+					results.size(), allModelsCompleteTime - multiModelStartTime);
 			
 			// Log which models succeeded and which failed
 			List<String> succeededModels = results.stream()
@@ -196,9 +203,19 @@ public class A2AController {
 			
 			if (!succeededModels.isEmpty()) {
 				logger.info("Successfully analyzed with {} model(s): {}", succeededModels.size(), succeededModels);
+				// Log execution times for successful models
+				results.stream()
+						.filter(r -> r.getError() == null || r.getError().isEmpty())
+						.forEach(r -> logger.info("Model {} executionTimeMs={}", 
+								r.getModelName(), r.getExecutionTimeMs()));
 			}
 			if (!failedModels.isEmpty()) {
 				logger.warn("Failed to analyze with {} model(s): {}", failedModels.size(), failedModels);
+				// Log execution times for failed models
+				results.stream()
+						.filter(r -> r.getError() != null && !r.getError().isEmpty())
+						.forEach(r -> logger.warn("Model {} failed executionTimeMs={}", 
+								r.getModelName(), r.getExecutionTimeMs()));
 			}
 			
 			// Check if all models failed
@@ -238,24 +255,30 @@ public class A2AController {
 					.filter(r -> r.getError() != null && !r.getError().isEmpty())
 					.collect(Collectors.toList());
 			
-			logger.info("📊 Decision-making summary:");
-			logger.info("   ✅ Models used in decision ({} total):", validResults.size());
-			validResults.forEach(r -> logger.info("      - {}: {} (confidence: {}%)", 
+			logger.info("Decision-making summary:");
+			logger.info("Models used in decision (total={})", validResults.size());
+			validResults.forEach(r -> logger.info("model={} decision={} confidence={} executionTimeMs={}", 
 					r.getModelName(), 
 					r.isPromote() ? "PROMOTE" : "ROLLBACK",
-					r.getConfidence()));
+					r.getConfidence(),
+					r.getExecutionTimeMs()));
 			
 			if (!invalidResults.isEmpty()) {
-				logger.warn("   ❌ Models EXCLUDED from decision ({} total):", invalidResults.size());
-				invalidResults.forEach(r -> logger.warn("      - {}: {}", 
+				logger.warn("Models EXCLUDED from decision (total={})", invalidResults.size());
+				invalidResults.forEach(r -> logger.warn("model={} error={} executionTimeMs={}", 
 						r.getModelName(), 
-						r.getError()));
+						r.getError(),
+						r.getExecutionTimeMs()));
 			}
 			
-			logger.info("   🎯 Final decision: {} (promote score: {:.2f}, rollback score: {:.2f})", 
+			logger.info("Final decision: {} promoteScore={} rollbackScore={}", 
 					aggregated.isPromote() ? "PROMOTE" : "ROLLBACK",
-					aggregated.getPromoteScore(),
-					aggregated.getRollbackScore());
+					String.format("%.2f", aggregated.getPromoteScore()),
+					String.format("%.2f", aggregated.getRollbackScore()));
+			
+			long aggregationCompleteTime = System.currentTimeMillis();
+			logger.info("Aggregation completed aggregationTimeMs={}", 
+					aggregationCompleteTime - allModelsCompleteTime);
 			
 			// Build response
 			A2AResponse response = new A2AResponse();
@@ -267,8 +290,12 @@ public class A2AController {
 			response.setModelResults(results);
 			response.setVotingRationale(aggregated.getVotingRationale());
 			
-			logger.info("Multi-model analysis complete: promote={}, promoteScore={}, rollbackScore={}",
-					aggregated.isPromote(), aggregated.getPromoteScore(), aggregated.getRollbackScore());
+			long totalMultiModelTime = System.currentTimeMillis() - multiModelStartTime;
+			logger.info("Multi-model analysis complete promote={} promoteScore={} rollbackScore={} totalTimeMs={}",
+					aggregated.isPromote(), 
+					String.format("%.2f", aggregated.getPromoteScore()),
+					String.format("%.2f", aggregated.getRollbackScore()),
+					totalMultiModelTime);
 			
 			return ResponseEntity.ok(response);
 			
@@ -296,7 +323,8 @@ public class A2AController {
 	 * Analyze with a single model (backward compatible)
 	 */
 	private ResponseEntity<A2AResponse> analyzeWithSingleModel(A2ARequest request, String modelName) {
-		logger.info("Running single-model analysis with: {}", modelName);
+		long singleModelStartTime = System.currentTimeMillis();
+		logger.info("Running single-model analysis with: {} startTime={}", modelName, singleModelStartTime);
 		
 		ModelAnalysisResult result = runSingleModelAnalysis(request, modelName);
 		
@@ -311,8 +339,9 @@ public class A2AController {
 		// Include single model result in list for consistency
 		response.setModelResults(List.of(result));
 		
-		logger.info("Single-model analysis complete: promote={}, confidence={}",
-				result.isPromote(), result.getConfidence());
+		long totalSingleModelTime = System.currentTimeMillis() - singleModelStartTime;
+		logger.info("Single-model analysis complete model={} promote={} confidence={} totalTimeMs={}",
+				modelName, result.isPromote(), result.getConfidence(), totalSingleModelTime);
 		
 		return ResponseEntity.ok(response);
 	}
@@ -321,128 +350,153 @@ public class A2AController {
 	 * Run analysis with a single model
 	 */
 	private ModelAnalysisResult runSingleModelAnalysis(A2ARequest request, String modelName) {
-		long startTime = System.currentTimeMillis();
-		ModelAnalysisResult result = new ModelAnalysisResult();
-		result.setModelName(modelName);
+		// Set MDC context for structured logging
+		MDC.put("model", modelName);
 		
 		try {
-			logger.info("Starting analysis with model: {}", modelName);
+			long startTime = System.currentTimeMillis();
+			ModelAnalysisResult result = new ModelAnalysisResult();
+			result.setModelName(modelName);
 			
-			// Build prompt with context
-			String prompt = buildPrompt(request);
-			logger.debug("Built prompt for {}: {}", modelName, prompt);
-
-			// Invoke agent with retry logic
-			Content userMsg = Content.fromParts(Part.fromText(prompt));
-			List<String> responses = RetryHelper.executeWithRetry(() -> {
-				String userId = request.getUserId().trim();
+			try {
+				logger.info("Starting analysis startTime={}", startTime);
 				
-				// Create a fresh agent with UNIQUE name for each request
-				// This allows us to use sessionName = agentName, which seems to be required by InMemoryRunner
-				String uniqueAgentName = "a2a-" + modelName + "-" + java.util.UUID.randomUUID().toString();
+				// Build prompt with context
+				String prompt = buildPrompt(request);
+				logger.debug("Built prompt: {}", prompt);
+
+				// Invoke agent with retry logic
+				Content userMsg = Content.fromParts(Part.fromText(prompt));
+				long modelCallStartTime = System.currentTimeMillis();
+				List<String> responses = RetryHelper.executeWithRetry(() -> {
+					String userId = request.getUserId().trim();
+					
+					// Create a fresh agent with UNIQUE name for each request
+					// This allows us to use sessionName = agentName, which seems to be required by InMemoryRunner
+					String uniqueAgentName = "a2a-" + modelName + "-" + java.util.UUID.randomUUID().toString();
+					
+					LlmAgent analysisAgent = LlmAgent.builder()
+							.name(uniqueAgentName)
+							.model(modelName)
+							.instruction(
+									"""
+											You are a Kubernetes SRE analyzing canary deployments. Use your Kubernetes tools to fetch logs and events.
+											
+											Do not write a script or code to perform the analysis. You must perform the analysis yourself by calling the available tools.
+
+											CRITICAL: You MUST respond with valid JSON in this exact format:
+											{
+												"analysis": "detailed analysis text",
+												"rootCause": "identified root cause",
+												"remediation": "suggested remediation steps",
+												"prLink": "github PR link or null",
+												"promote": true or false,
+												"confidence": 0-100
+											}
+
+											Use tools to gather real data, then provide your analysis in the JSON format above.
+											""")
+							.tools((Object[]) KubernetesAgent.K8S_TOOLS.toArray(new BaseTool[0]))
+							.build();
+
+					InMemoryRunner tempRunner = new InMemoryRunner(analysisAgent);
+					
+					// Session name MUST match agent name for InMemoryRunner to find it
+					String sessionName = uniqueAgentName;
+					logger.info("Creating session sessionName={} userId={}", sessionName, userId);
+					
+					Session session = tempRunner.sessionService()
+							.createSession(sessionName, userId)
+							.blockingGet();
+
+					long agentStartTime = System.currentTimeMillis();
+					logger.info("Executing runAsync sessionId={} userId={}", session.id(), userId);
+					Flowable<Event> events = tempRunner.runAsync(
+							userId,
+							session.id(),
+							userMsg);
+
+					// Collect results and log tool executions
+					List<String> eventResponses = new ArrayList<>();
+					events.blockingForEach(event -> {
+						KubernetesAgent.logToolExecution(event, modelName);
+						String content = event.stringifyContent();
+						if (content != null && !content.isEmpty()) {
+							eventResponses.add(content);
+						}
+					});
+
+					long agentEndTime = System.currentTimeMillis();
+					logger.info("Agent execution completed executionTimeMs={}", agentEndTime - agentStartTime);
+
+					return eventResponses;
+				}, "Model analysis: " + modelName);
+				long modelCallEndTime = System.currentTimeMillis();
+				logger.info("Model call completed modelCallTimeMs={}", modelCallEndTime - modelCallStartTime);
+
+				// Parse JSON response
+				String fullResponse = String.join("\n", responses);
+				long parseStartTime = System.currentTimeMillis();
+				A2AResponse parsedResponse = parseJsonResponse(fullResponse);
+				long parseEndTime = System.currentTimeMillis();
+				logger.debug("JSON parsing completed parseTimeMs={}", parseEndTime - parseStartTime);
 				
-				LlmAgent analysisAgent = LlmAgent.builder()
-						.name(uniqueAgentName)
-						.model(modelName)
-						.instruction(
-								"""
-										You are a Kubernetes SRE analyzing canary deployments. Use your Kubernetes tools to fetch logs and events.
-										
-										Do not write a script or code to perform the analysis. You must perform the analysis yourself by calling the available tools.
-
-										CRITICAL: You MUST respond with valid JSON in this exact format:
-										{
-											"analysis": "detailed analysis text",
-											"rootCause": "identified root cause",
-											"remediation": "suggested remediation steps",
-											"prLink": "github PR link or null",
-											"promote": true or false,
-											"confidence": 0-100
-										}
-
-										Use tools to gather real data, then provide your analysis in the JSON format above.
-										""")
-						.tools((Object[]) KubernetesAgent.K8S_TOOLS.toArray(new BaseTool[0]))
-						.build();
-
-				InMemoryRunner tempRunner = new InMemoryRunner(analysisAgent);
+				// Populate result with null-safety
+				result.setAnalysis(parsedResponse.getAnalysis() != null ? parsedResponse.getAnalysis() : "Analysis completed");
+				result.setRootCause(parsedResponse.getRootCause() != null ? parsedResponse.getRootCause() : "Root cause analysis pending");
+				result.setRemediation(parsedResponse.getRemediation() != null ? parsedResponse.getRemediation() : "Review required");
+				result.setPromote(parsedResponse.isPromote());
+				result.setConfidence(parsedResponse.getConfidence());
 				
-				// Session name MUST match agent name for InMemoryRunner to find it
-				String sessionName = uniqueAgentName;
-				logger.info("Creating new session '{}' for user '{}' and model '{}'", 
-						sessionName, userId, modelName);
+				long totalExecutionTime = System.currentTimeMillis() - startTime;
+				result.setExecutionTimeMs(totalExecutionTime);
 				
-				Session session = tempRunner.sessionService()
-						.createSession(sessionName, userId)
-						.blockingGet();
-
-				logger.info("Executing runAsync with session: {} for user: {}", session.id(), userId);
-				Flowable<Event> events = tempRunner.runAsync(
-						userId,
-						session.id(),
-						userMsg);
-
-				// Collect results and log tool executions
-				List<String> eventResponses = new ArrayList<>();
-				events.blockingForEach(event -> {
-					KubernetesAgent.logToolExecution(event);
-					String content = event.stringifyContent();
-					if (content != null && !content.isEmpty()) {
-						eventResponses.add(content);
+				// Log comprehensive timing breakdown
+				logger.info("Analysis completed promote={} confidence={} totalExecutionTimeMs={} modelCallTimeMs={}",
+						result.isPromote(), result.getConfidence(), totalExecutionTime, 
+						modelCallEndTime - modelCallStartTime);
+				
+				logger.info("Timing breakdown: totalTime={}ms (model+tools={}ms, parsing={}ms)",
+						totalExecutionTime, modelCallEndTime - modelCallStartTime, parseEndTime - parseStartTime);
+				
+			} catch (Exception e) {
+				// Check if it's a service unavailability error
+				long failedExecutionTime = System.currentTimeMillis() - startTime;
+				if (RetryHelper.isServiceUnavailableError(e)) {
+					logger.error("Service unavailable or unreachable executionTimeMs={}", failedExecutionTime);
+					logger.error("Error: {}", e.getMessage());
+				} else {
+					logger.error("Analysis failed executionTimeMs={}", failedExecutionTime);
+					logger.error("Error type: {}", e.getClass().getSimpleName());
+					logger.error("Error message: {}", e.getMessage());
+					
+					// Check if this is a tool calling related error
+					String errorMsg = e.getMessage();
+					if (errorMsg != null && (errorMsg.contains("tool") || errorMsg.contains("function") || 
+					                        errorMsg.contains("JSON") || errorMsg.contains("parsing"))) {
+						logger.error("This appears to be a tool calling failure!");
+						logger.error("The model likely generated malformed tool calls or invalid JSON.");
+						logger.error("Recommendation: Use a larger model or reduce tool complexity.");
 					}
-				});
-
-				return eventResponses;
-			}, "Model analysis: " + modelName);
-
-			// Parse JSON response
-			String fullResponse = String.join("\n", responses);
-			A2AResponse parsedResponse = parseJsonResponse(fullResponse);
-			
-			// Populate result with null-safety
-			result.setAnalysis(parsedResponse.getAnalysis() != null ? parsedResponse.getAnalysis() : "Analysis completed");
-			result.setRootCause(parsedResponse.getRootCause() != null ? parsedResponse.getRootCause() : "Root cause analysis pending");
-			result.setRemediation(parsedResponse.getRemediation() != null ? parsedResponse.getRemediation() : "Review required");
-			result.setPromote(parsedResponse.isPromote());
-			result.setConfidence(parsedResponse.getConfidence());
-			result.setExecutionTimeMs(System.currentTimeMillis() - startTime);
-			
-			logger.info("Model {} completed: promote={}, confidence={}, time={}ms",
-					modelName, result.isPromote(), result.getConfidence(), result.getExecutionTimeMs());
-			
-		} catch (Exception e) {
-			// Check if it's a service unavailability error
-			if (RetryHelper.isServiceUnavailableError(e)) {
-				logger.error("❌ Model {} failed - Service unavailable or unreachable", modelName);
-				logger.error("   Error: {}", e.getMessage());
-			} else {
-				logger.error("❌ Model {} analysis failed", modelName);
-				logger.error("   Error type: {}", e.getClass().getSimpleName());
-				logger.error("   Error message: {}", e.getMessage());
-				
-				// Check if this is a tool calling related error
-				String errorMsg = e.getMessage();
-				if (errorMsg != null && (errorMsg.contains("tool") || errorMsg.contains("function") || 
-				                        errorMsg.contains("JSON") || errorMsg.contains("parsing"))) {
-					logger.error("   ⚠️  This appears to be a tool calling failure!");
-					logger.error("   The model likely generated malformed tool calls or invalid JSON.");
-					logger.error("   Recommendation: Use a larger model or reduce tool complexity.");
 				}
+				
+				// Set error details in result
+				result.setError("Analysis failed: " + e.getMessage());
+				result.setAnalysis("Analysis encountered an error: " + e.getMessage());
+				result.setRootCause("Technical failure during analysis");
+				result.setRemediation("Please check logs and retry");
+				result.setPromote(true); // Default to promote on error
+				result.setConfidence(0);
+				result.setExecutionTimeMs(failedExecutionTime);
+				
+				logger.warn("Model will be EXCLUDED from decision-making due to failure");
 			}
 			
-			// Set error details in result
-			result.setError("Analysis failed: " + e.getMessage());
-			result.setAnalysis("Analysis encountered an error: " + e.getMessage());
-			result.setRootCause("Technical failure during analysis");
-			result.setRemediation("Please check logs and retry");
-			result.setPromote(true); // Default to promote on error
-			result.setConfidence(0);
-			result.setExecutionTimeMs(System.currentTimeMillis() - startTime);
-			
-			logger.warn("   ⚠️  Model {} will be EXCLUDED from decision-making due to failure", modelName);
+			return result;
+		} finally {
+			// Clean up MDC context
+			MDC.remove("model");
 		}
-		
-		return result;
 	}
 
 	/**
@@ -464,10 +518,11 @@ public class A2AController {
 		}
 
 		prompt.append("\nYou have access to Kubernetes tools. Use them to gather information:\n");
-		prompt.append("1. Use get_pod_logs to fetch pod logs for analysis\n");
-		prompt.append("2. Use get_kubernetes_events to see recent events\n");
-		prompt.append("3. Use debug_kubernetes_pod to check pod status\n");
-		prompt.append("4. Compare stable vs canary pod behavior\n");
+		prompt.append("1. Use list_pods to list pods with labelSelector like 'role=stable' or 'role=canary'\n");
+		prompt.append("2. Use get_pod_logs to fetch pod logs for analysis\n");
+		prompt.append("3. Use get_kubernetes_events to see recent events\n");
+		prompt.append("4. Use debug_kubernetes_pod to check pod status\n");
+		prompt.append("5. Compare stable vs canary pod behavior\n");
 		prompt.append("IMPORTANT: Execute these tools directly. Do NOT write code/scripts to invoke them.\n");
 		
 		// Add extra prompt if provided in context

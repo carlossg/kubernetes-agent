@@ -19,6 +19,7 @@ import io.reactivex.rxjava3.core.Flowable;
 import com.google.adk.events.Event;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
@@ -142,11 +143,6 @@ public class KubernetesAgent {
 		}
 	}
 
-	@Bean
-	public InMemoryRunner getRunner() {
-		return new InMemoryRunner(ROOT_AGENT);
-	}
-
 	private static void runConsoleMode() {
 		InMemoryRunner runner = new InMemoryRunner(ROOT_AGENT);
 		Session session = runner.sessionService()
@@ -176,31 +172,92 @@ public class KubernetesAgent {
 		}
 	}
 
+	// Track tool call start times for timing measurements
+	private static final java.util.Map<String, Long> toolCallStartTimes = new java.util.concurrent.ConcurrentHashMap<>();
+	
 	/**
 	 * Log tool execution details from events
 	 * Shared helper method used by both console mode and A2A controller
+	 * 
+	 * @param event The event to log
+	 * @param modelName Optional model name for MDC context (can be null for console mode)
 	 */
-	public static void logToolExecution(Event event) {
-		logger.debug("=== Event received: type={} ===", event.getClass().getSimpleName());
+	public static void logToolExecution(Event event, String modelName) {
+		// Set MDC context if model name provided
+		String previousModel = null;
+		if (modelName != null) {
+			previousModel = MDC.get("model");
+			MDC.put("model", modelName);
+		}
+		
+		try {
+			logger.debug("Event received eventType={}", event.getClass().getSimpleName());
 
-		// Log tool calls if present
-		if (event.content() != null && event.content().isPresent()) {
-			Content content = event.content().get();
-			if (content.parts() != null) {
-				for (var part : content.parts().get()) {
-					if (part.functionCall() != null && part.functionCall().isPresent()) {
-						var functionCall = part.functionCall().get();
-						logger.debug(">>> TOOL CALL: {}", functionCall.name());
-						logger.debug(">>> TOOL ARGS: {}", functionCall.args());
-					}
-					if (part.functionResponse() != null && part.functionResponse().isPresent()) {
-						var functionResponse = part.functionResponse().get();
-						logger.debug("<<< TOOL RESULT: {}", functionResponse.name());
-						logger.debug("<<< TOOL RESPONSE: {}", functionResponse.response());
+			// Log tool calls if present
+			if (event.content() != null && event.content().isPresent()) {
+				Content content = event.content().get();
+				if (content.parts() != null) {
+					for (var part : content.parts().get()) {
+						if (part.functionCall() != null && part.functionCall().isPresent()) {
+							var functionCall = part.functionCall().get();
+							if (functionCall.name() != null && functionCall.name().isPresent()) {
+								String toolName = functionCall.name().get();
+								long startTime = System.currentTimeMillis();
+								
+								// Store start time for this tool call
+								String toolKey = toolName + "_" + System.identityHashCode(functionCall);
+								toolCallStartTimes.put(toolKey, startTime);
+								
+								logger.debug("TOOL_CALL toolName={} args={} startTime={}", toolName, functionCall.args(), startTime);
+							}
+						}
+						if (part.functionResponse() != null && part.functionResponse().isPresent()) {
+							var functionResponse = part.functionResponse().get();
+							if (functionResponse.name() != null && functionResponse.name().isPresent()) {
+								String toolName = functionResponse.name().get();
+								long endTime = System.currentTimeMillis();
+								
+								// Try to find matching start time
+								// Since we can't match by object identity, find the most recent call for this tool
+								Long startTime = toolCallStartTimes.entrySet().stream()
+										.filter(e -> e.getKey().startsWith(toolName + "_"))
+										.map(java.util.Map.Entry::getValue)
+										.max(Long::compareTo)
+										.orElse(null);
+								
+								if (startTime != null) {
+									long executionTimeMs = endTime - startTime;
+									logger.debug("TOOL_RESPONSE toolName={} executionTimeMs={} response={}", 
+											toolName, executionTimeMs, functionResponse.response());
+									
+									// Clean up old entries for this tool
+									toolCallStartTimes.entrySet().removeIf(e -> 
+											e.getKey().startsWith(toolName + "_") && e.getValue().equals(startTime));
+								} else {
+									logger.debug("TOOL_RESPONSE toolName={} response={}", toolName, functionResponse.response());
+								}
+							}
+						}
 					}
 				}
 			}
+		} finally {
+			// Restore previous MDC context
+			if (modelName != null) {
+				if (previousModel != null) {
+					MDC.put("model", previousModel);
+				} else {
+					MDC.remove("model");
+				}
+			}
 		}
+	}
+	
+	/**
+	 * Log tool execution details from events (backward compatible, no model context)
+	 */
+	public static void logToolExecution(Event event) {
+		logToolExecution(event, null);
 	}
 
 	/**
@@ -231,6 +288,7 @@ public class KubernetesAgent {
 			// Google Search for known issues
 			LlmAgent searchAgent = LlmAgent.builder()
 					.model(MODEL_NAME)
+					// .model("gemma-3-1b-it")
 					.name("search_agent")
 					.description("Search Google for known issues")
 					.instruction("You're a specialist in searching for known Kubernetes and software issues")
@@ -285,7 +343,6 @@ public class KubernetesAgent {
 												 - Which repository to clone
 												 - Which files need changes
 												 - Specific code modifications (diffs)
-												 - Then call create_github_pr with this information
 
 												 IMPORTANT: You provide the WHAT (files to change, code diffs),
 												 the tool handles the HOW (git clone, branch, commit, push, PR creation)

@@ -25,6 +25,7 @@ public class K8sTools {
 	public static Map<String, Object> debugPod(
 			@Schema(name = "namespace", description = "The Kubernetes namespace of the pod") String namespace,
 			@Schema(name = "podName", description = "The name of the pod to debug") String podName) {
+		long startTime = System.currentTimeMillis();
 		logger.info("=== Executing Tool: debugPod ===");
 
 		if (namespace == null || podName == null) {
@@ -117,16 +118,18 @@ public class K8sTools {
 				debugInfo.put("owners", ownerInfo);
 			}
 
-			logger.info("Successfully retrieved debug info for pod: {}/{}", namespace, podName);
+			long executionTime = System.currentTimeMillis() - startTime;
+			logger.info("Successfully retrieved debug info for pod: {}/{} executionTimeMs={}", namespace, podName, executionTime);
 			return debugInfo;
 
 		} catch (Exception e) {
 			// Log message only for common errors (no stack trace)
+			long executionTime = System.currentTimeMillis() - startTime;
 			String errorMsg = e.getMessage();
 			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound"))) {
-				logger.warn("Error debugging pod: {}", errorMsg);
+				logger.warn("Error debugging pod: {} executionTimeMs={}", errorMsg, executionTime);
 			} else {
-				logger.error("Error debugging pod", e);
+				logger.error("Error debugging pod executionTimeMs={}", executionTime, e);
 			}
 			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
 		}
@@ -137,10 +140,15 @@ public class K8sTools {
 	public static Map<String, Object> listPods(
 			@Schema(name = "namespace", description = "The Kubernetes namespace") String namespace,
 			@Schema(name = "labelSelector", description = "Label selector to filter pods (e.g., 'role=stable' or 'role=canary')") String labelSelector) {
+		long startTime = System.currentTimeMillis();
 		logger.info("=== Executing Tool: listPods ===");
 
 		if (namespace == null || labelSelector == null) {
 			return Map.of("error", "namespace and labelSelector are required");
+		}
+		// if selector contains spaces
+		if (labelSelector.contains(" ")) {
+			return Map.of("error", "labelSelector cannot contain spaces");
 		}
 
 		logger.info("Listing pods in namespace: {} with selector: {}", namespace, labelSelector);
@@ -172,7 +180,8 @@ public class K8sTools {
 					})
 					.collect(Collectors.toList());
 
-			logger.info("Found {} pods matching selector: {}", podList.size(), labelSelector);
+			long executionTime = System.currentTimeMillis() - startTime;
+			logger.info("Found {} pods matching selector: {} executionTimeMs={}", podList.size(), labelSelector, executionTime);
 
 			return Map.of(
 					"namespace", namespace,
@@ -182,12 +191,13 @@ public class K8sTools {
 
 		} catch (Exception e) {
 			// Log message only for common errors (no stack trace)
+			long executionTime = System.currentTimeMillis() - startTime;
 			String errorMsg = e.getMessage();
 			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound")
 					|| errorMsg.contains("Unauthorized"))) {
-				logger.warn("Error listing pods: {}", errorMsg);
+				logger.warn("Error listing pods: {} executionTimeMs={}", errorMsg, executionTime);
 			} else {
-				logger.error("Error listing pods", e);
+				logger.error("Error listing pods executionTimeMs={}", executionTime, e);
 			}
 			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
 		}
@@ -206,6 +216,7 @@ public class K8sTools {
 			@Schema(name = "namespace", description = "The Kubernetes namespace") String namespace,
 			@Schema(name = "podName", description = "Optional: filter events for a specific pod name") String podName,
 			@Schema(name = "limit", description = "Optional: maximum number of events to return (default 50)") Integer limit) {
+		long startTime = System.currentTimeMillis();
 		logger.info("=== Executing Tool: getEvents ===");
 
 		if (namespace == null) {
@@ -251,7 +262,8 @@ public class K8sTools {
 									"name", e.getInvolvedObject().getName()) : Map.of()))
 					.collect(Collectors.toList());
 
-			logger.info("Retrieved {} events", eventList.size());
+			long executionTime = System.currentTimeMillis() - startTime;
+			logger.info("Retrieved {} events executionTimeMs={}", eventList.size(), executionTime);
 
 			return Map.of(
 					"namespace", namespace,
@@ -260,12 +272,13 @@ public class K8sTools {
 
 		} catch (Exception e) {
 			// Log message only for common errors (no stack trace)
+			long executionTime = System.currentTimeMillis() - startTime;
 			String errorMsg = e.getMessage();
 			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound")
 					|| errorMsg.contains("Unauthorized"))) {
-				logger.warn("Error getting events: {}", errorMsg);
+				logger.warn("Error getting events: {} executionTimeMs={}", errorMsg, executionTime);
 			} else {
-				logger.error("Error getting events", e);
+				logger.error("Error getting events executionTimeMs={}", executionTime, e);
 			}
 			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
 		}
@@ -287,6 +300,7 @@ public class K8sTools {
 			@Schema(name = "containerName", description = "Optional: specific container name") String containerName,
 			@Schema(name = "previous", description = "Optional: get logs from previous container instance (for crashed pods)") Boolean previous,
 			@Schema(name = "tailLines", description = "Optional: number of lines from the end of logs (default 100)") Integer tailLines) {
+		long startTime = System.currentTimeMillis();
 		logger.info("=== Executing Tool: getLogs ===");
 
 		if (namespace == null || podName == null) {
@@ -315,7 +329,8 @@ public class K8sTools {
 				logs = "(no logs available)";
 			}
 
-			logger.info("Retrieved {} characters of logs", logs.length());
+			long executionTime = System.currentTimeMillis() - startTime;
+			logger.info("Retrieved {} characters of logs executionTimeMs={}", logs.length(), executionTime);
 
 			return Map.of(
 					"namespace", namespace,
@@ -326,11 +341,12 @@ public class K8sTools {
 
 		} catch (Exception e) {
 			// Log message only for common errors (no stack trace)
+			long executionTime = System.currentTimeMillis() - startTime;
 			String errorMsg = e.getMessage();
 			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound"))) {
-				logger.warn("Error getting logs: {}", errorMsg);
+				logger.warn("Error getting logs: {} executionTimeMs={}", errorMsg, executionTime);
 			} else {
-				logger.error("Error getting logs", e);
+				logger.error("Error getting logs executionTimeMs={}", executionTime, e);
 			}
 			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
 		}
@@ -341,6 +357,7 @@ public class K8sTools {
 	public static Map<String, Object> getMetrics(
 			@Schema(name = "namespace", description = "The Kubernetes namespace") String namespace,
 			@Schema(name = "podName", description = "The name of the pod") String podName) {
+		long startTime = System.currentTimeMillis();
 		logger.info("=== Executing Tool: getMetrics ===");
 
 		if (namespace == null || podName == null) {
@@ -369,7 +386,8 @@ public class K8sTools {
 					})
 					.collect(Collectors.toList());
 
-			logger.info("Retrieved metrics for {} containers", containerMetrics.size());
+			long executionTime = System.currentTimeMillis() - startTime;
+			logger.info("Retrieved metrics for {} containers executionTimeMs={}", containerMetrics.size(), executionTime);
 
 			return Map.of(
 					"namespace", namespace,
@@ -379,12 +397,13 @@ public class K8sTools {
 
 		} catch (Exception e) {
 			// Log message only for common errors (no stack trace)
+			long executionTime = System.currentTimeMillis() - startTime;
 			String errorMsg = e.getMessage();
 			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound")
 					|| errorMsg.contains("not available"))) {
-				logger.warn("Error getting metrics: {}", errorMsg);
+				logger.warn("Error getting metrics: {} executionTimeMs={}", errorMsg, executionTime);
 			} else {
-				logger.error("Error getting metrics", e);
+				logger.error("Error getting metrics executionTimeMs={}", executionTime, e);
 			}
 			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
 		}
@@ -403,6 +422,7 @@ public class K8sTools {
 			@Schema(name = "namespace", description = "The Kubernetes namespace") String namespace,
 			@Schema(name = "resourceType", description = "Optional: specific resource type (deployment, service, configmap)") String resourceType,
 			@Schema(name = "resourceName", description = "Optional: specific resource name") String resourceName) {
+		long startTime = System.currentTimeMillis();
 		logger.info("=== Executing Tool: inspectResources ===");
 
 		if (namespace == null) {
@@ -470,17 +490,19 @@ public class K8sTools {
 				result.put("services", serviceInfo);
 			}
 
-			logger.info("Successfully inspected resources");
+			long executionTime = System.currentTimeMillis() - startTime;
+			logger.info("Successfully inspected resources executionTimeMs={}", executionTime);
 			return result;
 
 		} catch (Exception e) {
 			// Log message only for common errors (no stack trace)
+			long executionTime = System.currentTimeMillis() - startTime;
 			String errorMsg = e.getMessage();
 			if (errorMsg != null && (errorMsg.contains("not found") || errorMsg.contains("NotFound")
 					|| errorMsg.contains("Unauthorized"))) {
-				logger.warn("Error inspecting resources: {}", errorMsg);
+				logger.warn("Error inspecting resources: {} executionTimeMs={}", errorMsg, executionTime);
 			} else {
-				logger.error("Error inspecting resources", e);
+				logger.error("Error inspecting resources executionTimeMs={}", executionTime, e);
 			}
 			return Map.of("error", errorMsg != null ? errorMsg : e.getClass().getSimpleName());
 		}

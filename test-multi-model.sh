@@ -4,13 +4,12 @@
 set -e
 
 # Configuration
+CONTEXT="gke_api-project-642841493686_us-central1_autopilot-cluster-1"
 GEMMA_NAMESPACE="gemma-system"
 GEMMA_SERVICE="gemma-server"
 GEMMA_PORT="8000"
 AGENT_PORT="8080"
 TEST_PROMPT='You are a Kubernetes SRE analyzing canary deployments. Use your Kubernetes tools to fetch logs and events.
-
-Do not write a script or code to perform the analysis. You must perform the analysis yourself by calling the available tools.
 
 CRITICAL: You MUST respond with valid JSON in this exact format:
 {
@@ -22,7 +21,9 @@ CRITICAL: You MUST respond with valid JSON in this exact format:
 "confidence": "0-100"
 }
 
-Use tools to gather real data, then provide your analysis in the JSON format above.'
+Use tools to gather real data, then provide your analysis in the JSON format above.
+
+Use list_pods to list pods with labelSelector like "role=stable" or "role=canary" to find the pods to investiggate.'
 TEST_CONTEXT='{"namespace": "default", "rolloutName": "canary-demo", "stableSelector": "role=stable", "canarySelector": "role=canary"}'
 
 echo "=================================================="
@@ -49,7 +50,7 @@ echo "--- Starting port-forward to Gemma server in GKE ---"
 PF_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
 echo "Using port ${PF_PORT} for port-forward"
 
-kubectl port-forward -n "${GEMMA_NAMESPACE}" svc/"${GEMMA_SERVICE}" "${PF_PORT}":"${GEMMA_PORT}" >/dev/null 2>&1 &
+kubectl port-forward --context $CONTEXT -n "${GEMMA_NAMESPACE}" svc/"${GEMMA_SERVICE}" "${PF_PORT}":"${GEMMA_PORT}" >/dev/null 2>&1 &
 PF_PID=$!
 echo "Port-forward started with PID ${PF_PID}"
 
@@ -61,6 +62,7 @@ echo "--- Running Kubernetes Agent with Multi-Model Configuration ---"
 # Set environment variables for multi-model configuration
 export ENABLE_MULTI_MODEL="true"
 export MODELS_TO_USE="gemini-2.5-flash,gemma-3-1b-it"
+# export MODELS_TO_USE="gemma-3-1b-it"
 export GEMINI_MODEL="gemini-2.5-flash"
 export VLLM_MODEL="gemma-3-1b-it"
 export VLLM_API_BASE="http://localhost:${PF_PORT}"
@@ -69,8 +71,10 @@ export GOOGLE_API_KEY="${GOOGLE_API_KEY}"
 export VOTING_STRATEGY="weighted"
 
 # Run the agent locally using Maven
+# Disable Spring Boot's static content auto-configuration to prevent ADK browser UI
+# from intercepting our REST endpoints
 mvn -q spring-boot:run \
-	-Dspring-boot.run.arguments="--server.port=${AGENT_PORT}" \
+	-Dspring-boot.run.arguments="--server.port=${AGENT_PORT} --spring.web.resources.add-mappings=false" \
 	-Dspring.main.banner-mode=off \
 	-Dspring-boot.run.jvmArguments="-Djava.net.preferIPv4Stack=true" \
 	> agent.log 2>&1 &
@@ -105,9 +109,31 @@ if [ "$started" = false ]; then
 	exit 1
 fi
 
+# Give Spring Boot a moment to fully initialize HTTP endpoints
+echo "Agent started, waiting for HTTP endpoints to be ready..."
+sleep 3
+
 echo ""
 echo "--- Checking agent health endpoint ---"
-curl -s http://localhost:"${AGENT_PORT}"/a2a/health | jq .
+# Retry health check with backoff - endpoint may not be ready immediately after startup message
+health_retries=10
+health_count=0
+while [ $health_count -lt $health_retries ]; do
+	HEALTH_RESPONSE=$(curl -s http://localhost:"${AGENT_PORT}"/a2a/health)
+	if echo "$HEALTH_RESPONSE" | jq . > /dev/null 2>&1; then
+		echo "$HEALTH_RESPONSE" | jq .
+		break
+	fi
+	health_count=$((health_count+1))
+	if [ $health_count -lt $health_retries ]; then
+		echo "Health endpoint not ready yet, retrying in 2s... (attempt $health_count/$health_retries)"
+		sleep 2
+	else
+		echo "❌ Health endpoint failed to return valid JSON after $health_retries attempts"
+		echo "Raw response: $HEALTH_RESPONSE"
+		exit 1
+	fi
+done
 
 echo ""
 echo "--- Sending multi-model analysis request ---"

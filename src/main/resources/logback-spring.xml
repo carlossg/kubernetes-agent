@@ -4,9 +4,9 @@
 	<include resource="org/springframework/boot/logging/logback/defaults.xml"/>
 	<include resource="org/springframework/boot/logging/logback/console-appender.xml" />
 	
-	<!-- Custom console pattern with colors -->
+	<!-- Custom console pattern with colors and MDC model field -->
 	<property name="CONSOLE_LOG_PATTERN" 
-		value="%clr(%d{yyyy-MM-dd'T'HH:mm:ss.SSS}){faint} %clr(%5p) %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n"/>
+		value="%clr(%d{yyyy-MM-dd'T'HH:mm:ss.SSS}){faint} %clr(%5p) %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %clr([%X{model}]){magenta} %m%n"/>
 	
 	<appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
 		<encoder>
@@ -36,5 +36,3 @@
 	<logger name="okhttp3" level="WARN"/>
 	
 </configuration>
-
-

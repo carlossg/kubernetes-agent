@@ -496,7 +496,7 @@ public class VllmGemma extends BaseLlm {
 						Map<String, Object> args = objectMapper.readValue(argumentsJson, 
 							objectMapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class));
 						
-						logger.info("Successfully called tool toolName={} args={}", toolName, args);
+						logger.info("Preparing to call tool toolName={} args={}", toolName, args);
 						// Use FunctionCall.builder() to preserve the tool call ID from vLLM
 						parts.add(Part.builder()
 							.functionCall(FunctionCall.builder()

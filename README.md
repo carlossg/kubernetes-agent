@@ -217,12 +217,12 @@ spec:
 					ai-metric:
 						# Use agent mode
 						analysisMode: agent
-						namespace: "{{args.namespace}}"
-						podName: "{{args.canary-pod}}"
-						# Fallback to default mode
-						stablePodLabel: app=rollouts-demo,revision=stable
-						canaryPodLabel: app=rollouts-demo,revision=canary
-						model: gemini-2.0-flash-exp
+					namespace: "{{args.namespace}}"
+					podName: "{{args.canary-pod}}"
+					# Fallback to default mode
+					stablePodLabel: app=rollouts-demo,revision=stable
+					canaryPodLabel: app=rollouts-demo,revision=canary
+					model: gemini-3-flash-preview
 ```
 
 ### 2. The plugin will automatically:
@@ -242,7 +242,7 @@ spec:
 | `GITHUB_TOKEN` | Yes | GitHub personal access token |
 | `GIT_USERNAME` | No | Git commit username (default: "kubernetes-agent") |
 | `GIT_EMAIL` | No | Git commit email (default: "agent@example.com") |
-| `GEMINI_MODEL` | Yes | Model to use (e.g., "gemini-2.5-flash" or "gemma-3-1b-it") |
+| `GEMINI_MODEL` | Yes | Model to use (e.g., "gemini-3-flash-preview" or "gemma-3-1b-it") |
 | `VLLM_API_BASE` | Conditional | vLLM server base URL (required when using gemma-* models) |
 | `VLLM_API_KEY` | No | vLLM API key (default: "not-needed") |
 | `K8S_AGENT_URL` | No | Agent URL for plugin (default: http://kubernetes-agent.argo-rollouts.svc.cluster.local:8080) |
@@ -257,7 +257,7 @@ env:
   - name: GOOGLE_API_KEY
     value: "your-gemini-api-key"
   - name: GEMINI_MODEL
-    value: "gemini-2.5-flash"
+    value: "gemini-3-flash-preview"
 ```
 
 #### 2. Local vLLM Gemma (Self-hosted)
@@ -410,7 +410,7 @@ Enable multi-model analysis:
 - name: ENABLE_MULTI_MODEL
   value: "true"
 - name: MODELS_TO_USE
-  value: "gemini-2.5-flash,gemma-3-1b-it"  # Comma-separated list (optional, defaults to all available)
+  value: "gemini-3-flash-preview,gemma-3-1b-it"  # Comma-separated list (optional, defaults to all available)
 - name: VOTING_STRATEGY
   value: "weighted"  # Confidence-weighted voting
 ```
@@ -441,14 +441,14 @@ Enable multi-model analysis:
 
 ```json
 {
-  "analysis": "Multi-model analysis consensus:\n\n--- gemini-2.5-flash ---\nDatabase connection timeout detected...\n\n--- gemma-3-1b-it ---\nHigh error rate in canary logs...",
-  "rootCause": "gemini-2.5-flash: Database connection timeout; gemma-3-1b-it: High error rate",
+  "analysis": "Multi-model analysis consensus:\n\n--- gemini-3-flash-preview ---\nDatabase connection timeout detected...\n\n--- gemma-3-1b-it ---\nHigh error rate in canary logs...",
+  "rootCause": "gemini-3-flash-preview: Database connection timeout; gemma-3-1b-it: High error rate",
   "remediation": "- Increase database connection timeout\n- Add retry logic with exponential backoff",
   "promote": false,
   "confidence": 78,
   "modelResults": [
     {
-      "modelName": "gemini-2.5-flash",
+      "modelName": "gemini-3-flash-preview",
       "promote": false,
       "confidence": 85,
       "executionTimeMs": 3245
@@ -460,7 +460,7 @@ Enable multi-model analysis:
       "executionTimeMs": 2891
     }
   ],
-  "votingRationale": "Confidence-weighted voting: Promote=0.00, Rollback=1.57. Final decision: ROLLBACK.\n\nIndividual model votes:\n- gemini-2.5-flash: ROLLBACK (confidence: 85%)\n- gemma-3-1b-it: ROLLBACK (confidence: 72%)\n"
+  "votingRationale": "Confidence-weighted voting: Promote=0.00, Rollback=1.57. Final decision: ROLLBACK.\n\nIndividual model votes:\n- gemini-3-flash-preview: ROLLBACK (confidence: 85%)\n- gemma-3-1b-it: ROLLBACK (confidence: 72%)\n"
 }
 ```
 

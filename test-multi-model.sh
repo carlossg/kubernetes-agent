@@ -6,24 +6,35 @@ set -e
 # Configuration
 CONTEXT="gke_api-project-642841493686_us-central1_autopilot-cluster-1"
 GEMMA_NAMESPACE="gemma-system"
-GEMMA_SERVICE="gemma-server"
+GEMMA_1B_SERVICE="gemma-1b-server"
+GEMMA_27B_SERVICE="gemma-27b-server"
 GEMMA_PORT="8000"
 AGENT_PORT="8080"
-TEST_PROMPT='You are a Kubernetes SRE analyzing canary deployments. Use your Kubernetes tools to fetch logs and events.
+TEST_PROMPT='You are a Kubernetes SRE. Check canary pod logs for errors.
 
-CRITICAL: You MUST respond with valid JSON in this exact format:
+STEPS:
+1. Call list_pods with namespace and canarySelector from context
+2. For each pod, call read_pod_logs with namespace and pod name
+3. Check logs:
+   - "panic:" or "runtime error:" = ERROR
+   - "200 - red" = HEALTHY
+4. Report each pod: "Pod <name>: <healthy|has errors>. Logs show: <quote>"
+
+Decision: If any pod has panic/error → promote=false
+
+Example response:
+"Pod canary-demo-xyz: has errors. Logs show: runtime error: index out of range [0] at line 195
+Pod canary-demo-abc: healthy. Logs show: 200 - red"
+
+JSON format:
 {
-"analysis": "detailed analysis text",
-"rootCause": "identified root cause",
-"remediation": "suggested remediation steps",
-"prLink": "github PR link or null",
+"analysis": "<pod analysis>",
+"rootCause": "<error from logs>",
+"remediation": "<fix>",
+"prLink": null,
 "promote": true or false,
 "confidence": "0-100"
-}
-
-Use tools to gather real data, then provide your analysis in the JSON format above.
-
-Use list_pods to list pods with labelSelector like "role=stable" or "role=canary" to find the pods to investiggate.'
+}'
 TEST_CONTEXT='{"namespace": "default", "rolloutName": "canary-demo", "stableSelector": "role=stable", "canarySelector": "role=canary"}'
 
 echo "=================================================="
@@ -39,33 +50,41 @@ cleanup() {
 		echo "Stopping agent (PID: $AGENT_PID)..."
 		kill "$AGENT_PID" 2>/dev/null || true
 	fi
-	if [ ! -z "$PF_PID" ]; then
-		kill "$PF_PID" 2>/dev/null || true
+	if [ ! -z "$PF_1B_PID" ]; then
+		kill "$PF_1B_PID" 2>/dev/null || true
+	fi
+	if [ ! -z "$PF_27B_PID" ]; then
+		kill "$PF_27B_PID" 2>/dev/null || true
 	fi
 }
 trap cleanup EXIT
 
-echo "--- Starting port-forward to Gemma server in GKE ---"
-# Find an available port for port-forwarding
-PF_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
-echo "Using port ${PF_PORT} for port-forward"
+echo "--- Starting port-forwards to Gemma servers in GKE ---"
+# Port-forward for 1B model
+PF_1B_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+echo "Port-forwarding ${GEMMA_1B_SERVICE} to port ${PF_1B_PORT}"
+kubectl port-forward --context $CONTEXT -n "${GEMMA_NAMESPACE}" svc/"${GEMMA_1B_SERVICE}" "${PF_1B_PORT}":"${GEMMA_PORT}" >/dev/null 2>&1 &
+PF_1B_PID=$!
 
-kubectl port-forward --context $CONTEXT -n "${GEMMA_NAMESPACE}" svc/"${GEMMA_SERVICE}" "${PF_PORT}":"${GEMMA_PORT}" >/dev/null 2>&1 &
-PF_PID=$!
-echo "Port-forward started with PID ${PF_PID}"
+# Port-forward for 27B model
+PF_27B_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+echo "Port-forwarding ${GEMMA_27B_SERVICE} to port ${PF_27B_PORT}"
+kubectl port-forward --context $CONTEXT -n "${GEMMA_NAMESPACE}" svc/"${GEMMA_27B_SERVICE}" "${PF_27B_PORT}":"${GEMMA_PORT}" >/dev/null 2>&1 &
+PF_27B_PID=$!
 
-# Wait for port-forward to be ready
+# Wait for port-forwards to be ready
 sleep 5
 
 echo ""
 echo "--- Running Kubernetes Agent with Multi-Model Configuration ---"
 # Set environment variables for multi-model configuration
 export ENABLE_MULTI_MODEL="true"
-export MODELS_TO_USE="gemini-2.5-flash,gemma-3-1b-it"
-# export MODELS_TO_USE="gemma-3-1b-it"
+export MODELS_TO_USE="gemini-2.5-flash,gemma-3-1b-it,gemma-3-27b-it"
 export GEMINI_MODEL="gemini-2.5-flash"
-export VLLM_MODEL="gemma-3-1b-it"
-export VLLM_API_BASE="http://localhost:${PF_PORT}"
+# Configure multiple vLLM models
+export VLLM_MODELS="gemma-3-1b-it,gemma-3-27b-it"
+export VLLM_API_BASE_GEMMA_3_1B_IT="http://localhost:${PF_1B_PORT}"
+export VLLM_API_BASE_GEMMA_3_27B_IT="http://localhost:${PF_27B_PORT}"
 export VLLM_API_KEY="not-needed"
 export GOOGLE_API_KEY="${GOOGLE_API_KEY}"
 export VOTING_STRATEGY="weighted"

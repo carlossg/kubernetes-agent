@@ -46,7 +46,7 @@ spec:
               value: "kubernetes-agent@csanchez.org"
             # Single-model configuration (backward compatible)
             - name: GEMINI_MODEL
-              value: "gemini-2.5-flash" # Gemini model from Google API
+              value: "gemini-3-flash-preview" # Gemini model from Google API
             # vLLM configuration for local Gemma models
             - name: VLLM_MODEL
               value: "gemma-3-1b-it" # Local vLLM model
@@ -58,7 +58,7 @@ spec:
             - name: ENABLE_MULTI_MODEL
               value: "true" # Enable multi-model parallel analysis
             - name: MODELS_TO_USE
-              value: "gemini-2.5-flash,gemma-3-1b-it" # Both Gemini and Gemma
+              value: "gemini-3-flash-preview,gemma-3-1b-it" # Both Gemini and Gemma
             - name: VOTING_STRATEGY
               value: "weighted" # Confidence-weighted voting
             - name: JAVA_TOOL_OPTIONS

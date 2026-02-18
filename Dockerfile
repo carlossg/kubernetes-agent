@@ -27,7 +27,7 @@ USER k8sagent
 EXPOSE 8080
 
 ENV JAVA_OPTS="-Xmx1g -XX:+UseG1GC"
-ENV GEMINI_MODEL="gemini-2.5-flash"
+ENV GEMINI_MODEL="gemini-3-flash-preview"
 
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/kubernetes-agent.jar"]
 

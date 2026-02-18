@@ -33,7 +33,7 @@ import java.util.Scanner;
 public class KubernetesAgent {
 
 	private static final Logger logger = LoggerFactory.getLogger(KubernetesAgent.class);
-	private static final String MODEL_NAME = System.getenv().getOrDefault("GEMINI_MODEL", "gemini-2.5-flash");
+	private static final String MODEL_NAME = System.getenv().getOrDefault("GEMINI_MODEL", "gemini-3-flash-preview");
 	private static final String AGENT_NAME = "KubernetesAgent";
 	private static final String USER_ID = "argo-rollouts";
 	

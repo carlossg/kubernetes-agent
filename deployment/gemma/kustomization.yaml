@@ -5,9 +5,10 @@ namespace: gemma-system
 
 resources:
   - namespace.yaml
-  - pvc.yaml
-  - deployment.yaml
-  - service.yaml
+  - pvcs.yaml
+  - gemma-1b-deployment.yaml
+  - gemma-9b-deployment.yaml
+  - gemma-27b-deployment.yaml
 
 labels:
   - pairs:

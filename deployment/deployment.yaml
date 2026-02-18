@@ -51,7 +51,7 @@ spec:
             - name: VLLM_MODEL
               value: "gemma-3-1b-it" # Local vLLM model
             - name: VLLM_API_BASE
-              value: "http://gemma-server.gemma-system.svc.cluster.local:8000"
+              value: "http://gemma-1b-server.gemma-system.svc.cluster.local:8000"
             - name: VLLM_API_KEY
               value: "not-needed"  # vLLM doesn't require authentication for in-cluster access
             # Multi-model configuration - ENABLED for Gemini + Gemma parallel analysis

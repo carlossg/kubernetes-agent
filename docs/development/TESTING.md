@@ -2,6 +2,8 @@
 
 This guide explains how to test the kubernetes-agent after deployment.
 
+**Test script overview:** The repo has several test scripts (e.g. `test-agent.sh`, `test-three-models.sh`). See [TEST_SCRIPTS.md](TEST_SCRIPTS.md) for what each does and when to use it.
+
 ## Prerequisites
 
 1. Agent deployed in cluster: `kubectl apply -k deployment/`

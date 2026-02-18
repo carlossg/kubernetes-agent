@@ -1,5 +1,6 @@
 #!/bin/bash
 # Test script for Kubernetes AI Agent
+# Purpose: Smoke test — health check + one analyze request (no model choice). Use for "is the agent up?"
 # Supports both Kubernetes and local modes
 # Usage:
 #   ./test-agent.sh k8s     # Test agent running in Kubernetes (default)

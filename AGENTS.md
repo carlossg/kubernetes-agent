@@ -62,7 +62,7 @@ kubectl get pod -n argo-rollouts -l app=kubernetes-agent -o jsonpath='{.items[0]
 ```
 
 ### Connection Refused (Gemma)
-If logs show `Connection refused` for `gemma-3-1b-it`, check if the `gemma-server` is running and reachable:
+If logs show `Connection refused` for `gemma-3-1b-it`, check if the Gemma service (e.g. `gemma-1b-server`) is running and reachable:
 
 ```bash
 kubectl get pods -n gemma-system

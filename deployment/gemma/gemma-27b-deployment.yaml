@@ -1,28 +1,28 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: gemma-server
+  name: gemma-27b-server
   namespace: gemma-system
   labels:
-    app: gemma-server
+    app: gemma-27b-server
+    model: gemma-3-27b-it
     demo: argo-rollouts
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: gemma-server
+      app: gemma-27b-server
   template:
     metadata:
       labels:
-        app: gemma-server
+        app: gemma-27b-server
+        model: gemma-3-27b-it
         demo: argo-rollouts
     spec:
       nodeSelector:
         cloud.google.com/gke-accelerator: "nvidia-l4"
-        cloud.google.com/gke-accelerator-count: "1"
       containers:
         - name: gemma
-          # Using vLLM with Gemma 2B model for efficient inference
           image: vllm/vllm-openai:latest
           ports:
             - containerPort: 8000
@@ -30,25 +30,28 @@ spec:
               protocol: TCP
           env:
             - name: MODEL_NAME
-              value: "google/gemma-3-1b-it"  # Gemma 3 1B fits well on L4
+              value: "google/gemma-3-27b-it"
             - name: SERVED_MODEL_NAME
-              value: "gemma-3-1b-it"
+              value: "gemma-3-27b-it"
             - name: MAX_MODEL_LEN
-              value: "8192"  # L4 can handle 8K context with Gemma 3 1B
+              value: "512"
             - name: GPU_MEMORY_UTILIZATION
-              value: "0.9"
+              value: "0.90"
             - name: TENSOR_PARALLEL_SIZE
               value: "1"
-            # Hugging Face token for gated model access
+            - name: QUANTIZATION
+              value: "bitsandbytes"
+            - name: LOAD_FORMAT
+              value: "bitsandbytes"
+            - name: KV_CACHE_DTYPE
+              value: "fp8"
             - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: huggingface-secret
                   key: token
-            # Use PVC for model caching (avoid re-downloading)
             - name: HF_HOME
               value: "/model-cache"
-            # Reduce memory fragmentation
             - name: PYTORCH_CUDA_ALLOC_CONF
               value: "expandable_segments:True"
           volumeMounts:
@@ -75,35 +78,41 @@ spec:
             - --enable-auto-tool-choice
             - --tool-call-parser
             - "pythonic"
+            - --quantization
+            - $(QUANTIZATION)
+            - --load-format
+            - $(LOAD_FORMAT)
+            - --kv-cache-dtype
+            - $(KV_CACHE_DTYPE)
           resources:
             requests:
-              memory: "8Gi"
-              cpu: "2"
+              memory: "24Gi"
+              cpu: "8"
               nvidia.com/gpu: "1"
             limits:
-              memory: "16Gi"
-              cpu: "4"
+              memory: "32Gi"
+              cpu: "12"
               nvidia.com/gpu: "1"
-          # Probes disabled during initial setup - model loading takes 5-10 minutes
-          # Uncomment after first successful start
-          # livenessProbe:
-          #   httpGet:
-          #     path: /health
-          #     port: http
-          #   initialDelaySeconds: 600
-          #   periodSeconds: 30
-          #   timeoutSeconds: 10
-          #   failureThreshold: 3
-          # readinessProbe:
-          #   httpGet:
-          #     path: /health
-          #     port: http
-          #   initialDelaySeconds: 600
-          #   periodSeconds: 10
-          #   timeoutSeconds: 5
-          #   failureThreshold: 3
       restartPolicy: Always
       volumes:
         - name: model-cache
           persistentVolumeClaim:
-            claimName: gemma-model-cache
+            claimName: gemma-27b-model-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gemma-27b-server
+  namespace: gemma-system
+  labels:
+    app: gemma-27b-server
+    model: gemma-3-27b-it
+spec:
+  selector:
+    app: gemma-27b-server
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  type: ClusterIP

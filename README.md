@@ -264,14 +264,14 @@ env:
 ```yaml
 env:
   - name: GEMINI_MODEL
-    value: "gemma-3-1b-it"  # Any model name starting with "gemma-"
+    value: "gemma-3-1b-it"  # or gemma-2-9b-it; any model name starting with "gemma-"
   - name: VLLM_API_BASE
-    value: "http://gemma-server.gemma-system.svc.cluster.local:8000"
+    value: "http://gemma-1b-server.gemma-system.svc.cluster.local:8000"  # or gemma-9b-server
   - name: VLLM_API_KEY
     value: "not-needed"  # Optional
 ```
 
-> **Note**: When `GEMINI_MODEL` starts with `gemma-`, the agent automatically uses the vLLM endpoint specified in `VLLM_API_BASE`. The Gemma model must be deployed separately (see [deployment/gemma/README.md](deployment/gemma/README.md)).
+> **Note**: When `GEMINI_MODEL` starts with `gemma-`, the agent automatically uses the vLLM endpoint specified in `VLLM_API_BASE`. Available deployments: `gemma-1b-server` (Gemma 3 1B), `gemma-9b-server` (Gemma 2 9B). See [deployment/gemma/README.md](deployment/gemma/README.md).
 
 ### Resource Limits
 
@@ -410,7 +410,7 @@ Enable multi-model analysis:
 - name: ENABLE_MULTI_MODEL
   value: "true"
 - name: MODELS_TO_USE
-  value: "gemini-3-flash-preview,gemma-3-1b-it"  # Comma-separated list (optional, defaults to all available)
+  value: "gemini-2.5-flash,gemma-3-1b-it,gemma-2-9b-it"  # Comma-separated (optional; only one vLLM model at a time when using VLLM_API_BASE)
 - name: VOTING_STRATEGY
   value: "weighted"  # Confidence-weighted voting
 ```
@@ -466,17 +466,23 @@ Enable multi-model analysis:
 
 ### Testing Multi-Model Locally
 
-Use the provided test script:
+**Unified model comparison** (choose models via parameters or interactively):
+
+```bash
+./test-models.sh                          # interactive: choose models
+./test-models.sh gemini gemma-1b          # Gemini + Gemma 1B
+./test-models.sh -m gemini,gemma-1b,gemma-9b
+./test-models.sh --help
+```
+
+Available models: `gemini`, `gemma-1b`, `gemma-9b`. The script runs the same analyze request with each selected model (sequential), saves `result_<model>.json`, and prints a comparison summary. Optionally wait for vLLM with `--no-wait-vllm` to skip when servers are already up.
+
+**Multi-model parallel** (one request, multiple models with weighted voting):
 
 ```bash
 ./test-multi-model.sh
 ```
 
-This script:
-1. Builds the Docker image
-2. Starts port-forward to GKE Gemma server
-3. Runs agent with multi-model configuration
-4. Sends test query with both models
-5. Verifies parallel execution and weighted voting work correctly
+Requires Gemma deployments in `gemma-system`; see [deployment/gemma/README.md](deployment/gemma/README.md). See [docs/development/TEST_SCRIPTS.md](docs/development/TEST_SCRIPTS.md) for all test scripts.
 
 

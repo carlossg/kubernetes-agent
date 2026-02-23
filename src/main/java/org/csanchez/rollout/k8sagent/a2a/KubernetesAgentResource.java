@@ -15,6 +15,7 @@ import org.csanchez.rollout.k8sagent.model.KubernetesAgentRequest;
 import org.csanchez.rollout.k8sagent.model.KubernetesAgentResponse;
 import org.csanchez.rollout.k8sagent.service.AgentResponseParser;
 import org.csanchez.rollout.k8sagent.utils.RetryHelper;
+import org.csanchez.rollout.k8sagent.utils.ToolCallLimiter;
 
 /**
  * REST API controller for Kubernetes Agent.
@@ -47,6 +48,10 @@ public class KubernetesAgentResource {
             // Get effective memory ID (uses memoryId if provided, otherwise falls back to userId)
             String memoryId = request.getEffectiveMemoryId();
             Log.debug(MessageFormat.format("Using memory ID: {0}", memoryId));
+            
+            // Reset tool call limiter for this new analysis session
+            ToolCallLimiter.resetSession(memoryId);
+            Log.info(MessageFormat.format("Reset tool call limiter for session: {0}", memoryId));
             
             // Execute analysis with retry logic for transient errors
             String analysisResult = RetryHelper.executeWithRetryOnTransientErrors(

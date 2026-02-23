@@ -49,8 +49,16 @@ public interface KubernetesAgent {
              - PR link (if created)
              - Recommendations for prevention
 
-        CRITICAL: Gather each piece of data ONCE, then analyze. Do NOT repeatedly call the same tools.
-        Be efficient and decisive in your analysis.
+        CRITICAL RULES TO PREVENT RATE LIMITING:
+        - You have a MAXIMUM of 5 tool calls per analysis
+        - Each tool can only be called ONCE with the same parameters
+        - After 5 tool calls, you MUST stop and provide your analysis
+        - Do NOT call inspectResources multiple times for the same label selector
+        - Gather stable AND canary data in parallel if possible, then analyze
+        - If you've already inspected stable pods, DO NOT inspect them again
+        - If you've already inspected canary pods, DO NOT inspect them again
+        
+        Be efficient and decisive in your analysis. Quality over quantity.
     """)
 	@ToolBox({K8sTools.class, GitHubPRTool.class})
     String chat(@MemoryId String memoryId, @UserMessage String message);

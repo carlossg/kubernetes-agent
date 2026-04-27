@@ -4,6 +4,7 @@ import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.runner.InMemoryRunner;
 import com.google.adk.models.LlmRegistry;
+import org.csanchez.adk.agents.k8sagent.models.OpenAiCompatible;
 import org.csanchez.adk.agents.k8sagent.models.VllmGemma;
 import org.csanchez.adk.agents.k8sagent.remediation.GitHubPRTool;
 import org.csanchez.adk.agents.k8sagent.remediation.GitOperations;
@@ -43,9 +44,10 @@ public class KubernetesAgent {
 			System.getenv().getOrDefault("ENABLE_MULTI_MODEL", "false"));
 	private static final List<String> AVAILABLE_MODELS = new ArrayList<>();
 
-	// Register custom vLLM Gemma model support
+	// Register custom model support
 	static {
 		registerVllmGemmaModels();
+		registerOpenAiCompatibleModels();
 		initializeAvailableModels();
 	}
 
@@ -78,7 +80,44 @@ public class KubernetesAgent {
 			logger.info("VLLM_API_BASE not set, vLLM Gemma models not registered");
 		}
 	}
-	
+
+	/**
+	 * Register an OpenAI-compatible LLM endpoint (LiteLLM proxy, OpenRouter,
+	 * Anthropic-compatible gateway, vLLM serving native-tool-calling models, etc.).
+	 *
+	 * <p>Activated when {@code OPENAI_COMPATIBLE_API_BASE} is set. Routes all model
+	 * names matching {@code OPENAI_COMPATIBLE_MODEL_PATTERN} (default {@code claude-.*})
+	 * through {@link OpenAiCompatible}, which preserves OpenAI tool/assistant role
+	 * semantics — required for Claude, GPT-4, and other models with native tool
+	 * calling.
+	 *
+	 * <p>Env vars:
+	 * <ul>
+	 *   <li>{@code OPENAI_COMPATIBLE_API_BASE} — base URL without {@code /v1} suffix
+	 *       (e.g. {@code http://litellm-proxy.svc:5567}).</li>
+	 *   <li>{@code OPENAI_COMPATIBLE_API_KEY} — optional bearer token.</li>
+	 *   <li>{@code OPENAI_COMPATIBLE_MODEL_PATTERN} — regex matching model names served
+	 *       by this endpoint. Defaults to {@code claude-.*}.</li>
+	 * </ul>
+	 */
+	private static void registerOpenAiCompatibleModels() {
+		String apiBase = System.getenv("OPENAI_COMPATIBLE_API_BASE");
+		if (apiBase == null || apiBase.isEmpty()) {
+			logger.info("OPENAI_COMPATIBLE_API_BASE not set, OpenAI-compatible models not registered");
+			return;
+		}
+		String apiKey = System.getenv().getOrDefault("OPENAI_COMPATIBLE_API_KEY", "not-needed");
+		String pattern = System.getenv().getOrDefault("OPENAI_COMPATIBLE_MODEL_PATTERN", "claude-.*");
+		logger.info("Registering OpenAI-compatible models matching '{}' against API base: {}", pattern, apiBase);
+		LlmRegistry.registerLlm(pattern, modelName ->
+			OpenAiCompatible.builder()
+				.modelName(modelName)
+				.apiBaseUrl(apiBase)
+				.apiKey(apiKey)
+				.build()
+		);
+	}
+
 	/**
 	 * Initialize the list of available models
 	 */
@@ -92,7 +131,15 @@ public class KubernetesAgent {
 		if (vllmApiBase != null && !vllmApiBase.isEmpty()) {
 			AVAILABLE_MODELS.add(vllmModel);
 		}
-		
+
+		// Add OpenAI-compatible models if configured
+		String openAiCompatibleApiBase = System.getenv("OPENAI_COMPATIBLE_API_BASE");
+		String openAiCompatibleModel = System.getenv("OPENAI_COMPATIBLE_MODEL");
+		if (openAiCompatibleApiBase != null && !openAiCompatibleApiBase.isEmpty()
+				&& openAiCompatibleModel != null && !openAiCompatibleModel.isEmpty()) {
+			AVAILABLE_MODELS.add(openAiCompatibleModel);
+		}
+
 		logger.info("Available models: {}", AVAILABLE_MODELS);
 		logger.info("Multi-model analysis enabled: {}", ENABLE_MULTI_MODEL);
 	}

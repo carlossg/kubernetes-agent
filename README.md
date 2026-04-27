@@ -245,11 +245,15 @@ spec:
 | `GEMINI_MODEL` | Yes | Model to use (e.g., "gemini-3-flash-preview" or "gemma-3-1b-it") |
 | `VLLM_API_BASE` | Conditional | vLLM server base URL (required when using gemma-* models) |
 | `VLLM_API_KEY` | No | vLLM API key (default: "not-needed") |
+| `OPENAI_COMPATIBLE_API_BASE` | Conditional | OpenAI-compatible endpoint base URL — without `/v1` suffix (required when using Claude / GPT / OpenAI-compatible models) |
+| `OPENAI_COMPATIBLE_API_KEY` | No | Bearer token for the OpenAI-compatible endpoint (default: "not-needed") |
+| `OPENAI_COMPATIBLE_MODEL_PATTERN` | No | Regex of model names served by the endpoint (default: `claude-.*`) |
+| `OPENAI_COMPATIBLE_MODEL` | No | Model identifier added to `AVAILABLE_MODELS` for multi-model voting |
 | `K8S_AGENT_URL` | No | Agent URL for plugin (default: http://kubernetes-agent.argo-rollouts.svc.cluster.local:8080) |
 
 ### Model Configuration
 
-The agent supports two modes:
+The agent supports three modes:
 
 #### 1. Google Gemini API (Cloud)
 ```yaml
@@ -272,6 +276,25 @@ env:
 ```
 
 > **Note**: When `GEMINI_MODEL` starts with `gemma-`, the agent automatically uses the vLLM endpoint specified in `VLLM_API_BASE`. Available deployments: `gemma-1b-server` (Gemma 3 1B), `gemma-9b-server` (Gemma 2 9B). See [deployment/gemma/README.md](deployment/gemma/README.md).
+
+#### 3. OpenAI-Compatible Endpoint (Claude on Bedrock, OpenRouter, LiteLLM proxy, etc.)
+```yaml
+env:
+  - name: GEMINI_MODEL
+    value: "claude-haiku-4-5"  # any model name matching OPENAI_COMPATIBLE_MODEL_PATTERN
+  - name: OPENAI_COMPATIBLE_API_BASE
+    value: "http://litellm-proxy.svc.cluster.local:4000"  # base URL WITHOUT /v1 suffix
+  - name: OPENAI_COMPATIBLE_API_KEY
+    value: "sk-..."  # optional bearer token
+  - name: OPENAI_COMPATIBLE_MODEL_PATTERN
+    value: "claude-.*"  # optional, default is "claude-.*"
+```
+
+Use this mode for any LLM exposed over the OpenAI ChatCompletions wire format that has **native tool calling** — Claude (via Anthropic API, AWS Bedrock through LiteLLM, OpenRouter, etc.), GPT-4, Llama 3.1+ on a serving stack with native tool support, and similar.
+
+Unlike the vLLM-Gemma path, this client preserves OpenAI `tool` and `assistant.tool_calls` semantics — required for native-tool-calling models. Tool responses are not truncated.
+
+> **Choosing between vLLM-Gemma and OpenAI-Compatible**: Both speak `/v1/chat/completions`. Use the vLLM path when serving Gemma (which needs the agent to rewrite tool messages into user-role messages because Gemma's chat template lacks a tool role). Use the OpenAI-Compatible path for any model with native tool calling — rewriting messages would degrade fidelity.
 
 ### Resource Limits
 

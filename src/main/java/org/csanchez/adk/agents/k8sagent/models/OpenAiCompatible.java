@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -43,6 +44,7 @@ import java.util.concurrent.TimeUnit;
  *   <li>Does not truncate tool responses — use the model's full context window.</li>
  *   <li>Does not deduplicate tool calls in responses.</li>
  *   <li>Does not collapse consecutive same-role messages.</li>
+ *   <li>Does not send {@code top_k} (non-standard for OpenAI ChatCompletions).</li>
  * </ul>
  *
  * <p>Use this class for Claude (via Bedrock, Anthropic-compatible LiteLLM proxy,
@@ -56,8 +58,20 @@ public class OpenAiCompatible extends BaseLlm {
 			.registerModule(new Jdk8Module());
 	private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
+	// Shared across all OpenAiCompatible instances. OkHttp's connection pool, dispatcher,
+	// and idle thread pool are all per-client; using one instance reuses connections
+	// across calls and avoids socket/thread leaks if multiple instances are constructed.
+	// callTimeout caps the total wall-clock duration of a call as a hard upper bound
+	// over connect+write+read; without it, a slowly-trickling response could hold a
+	// connection for far longer than readTimeout (which is per-socket-read).
+	private static final OkHttpClient HTTP_CLIENT = new OkHttpClient.Builder()
+			.callTimeout(180, TimeUnit.SECONDS)
+			.connectTimeout(30, TimeUnit.SECONDS)
+			.readTimeout(120, TimeUnit.SECONDS)
+			.writeTimeout(30, TimeUnit.SECONDS)
+			.build();
+
 	private final String apiBaseUrl;
-	private final OkHttpClient httpClient;
 	private final String apiKey;
 
 	/**
@@ -65,19 +79,31 @@ public class OpenAiCompatible extends BaseLlm {
 	 * @param apiBaseUrl Base URL of the OpenAI-compatible endpoint, WITHOUT a trailing
 	 *                   {@code /v1} (e.g. {@code http://litellm-proxy.svc:5567}). The
 	 *                   {@code /v1/chat/completions} suffix is appended automatically.
+	 *                   Whitespace is trimmed and a single trailing {@code /} is removed.
 	 * @param apiKey     Optional bearer token. {@code null} or {@code "not-needed"} disables
 	 *                   the {@code Authorization} header.
 	 */
 	public OpenAiCompatible(String modelName, String apiBaseUrl, String apiKey) {
 		super(modelName);
-		this.apiBaseUrl = Objects.requireNonNull(apiBaseUrl, "apiBaseUrl cannot be null");
+		Objects.requireNonNull(apiBaseUrl, "apiBaseUrl cannot be null");
+		String trimmed = apiBaseUrl.trim();
+		if (trimmed.isEmpty()) {
+			throw new IllegalArgumentException("apiBaseUrl cannot be blank");
+		}
+		while (trimmed.endsWith("/")) {
+			trimmed = trimmed.substring(0, trimmed.length() - 1);
+		}
+		if (trimmed.endsWith("/v1")) {
+			logger.warn("apiBaseUrl ends with '/v1' — the suffix '/v1/chat/completions' is appended"
+					+ " automatically; check OPENAI_COMPATIBLE_API_BASE if requests 404");
+		}
+		this.apiBaseUrl = trimmed;
 		this.apiKey = apiKey;
-		this.httpClient = new OkHttpClient.Builder()
-				.connectTimeout(30, TimeUnit.SECONDS)
-				.readTimeout(120, TimeUnit.SECONDS)
-				.writeTimeout(30, TimeUnit.SECONDS)
-				.build();
-		logger.info("Initialized OpenAiCompatible with model: {}, apiBaseUrl: {}", modelName, apiBaseUrl);
+		if ("not-needed".equals(apiKey)) {
+			logger.warn("apiKey == 'not-needed' sentinel; Authorization header will NOT be sent."
+					+ " If your endpoint requires auth, set OPENAI_COMPATIBLE_API_KEY to a real bearer token.");
+		}
+		logger.info("Initialized OpenAiCompatible with model: {}, apiBaseUrl: {}", modelName, this.apiBaseUrl);
 	}
 
 	public static Builder builder() {
@@ -86,9 +112,16 @@ public class OpenAiCompatible extends BaseLlm {
 
 	@Override
 	public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
+		String previousMdc = MDC.get("model");
 		MDC.put("model", model());
 		try {
-			ObjectNode requestBody = buildOpenAiRequest(llmRequest, stream);
+			// Streaming SSE parsing is not implemented — never request stream from upstream
+			// regardless of the caller's flag. Forwarding stream=true would yield SSE bytes
+			// that the JSON parser can't handle.
+			if (stream) {
+				logger.warn("Streaming not yet implemented for OpenAiCompatible, using non-streaming mode");
+			}
+			ObjectNode requestBody = buildOpenAiRequest(llmRequest, false);
 			logger.debug("Sending request to OpenAI-compatible endpoint: {}", requestBody.toPrettyString());
 
 			Request.Builder requestBuilder = new Request.Builder()
@@ -99,48 +132,68 @@ public class OpenAiCompatible extends BaseLlm {
 				requestBuilder.header("Authorization", "Bearer " + apiKey);
 			}
 
-			if (stream) {
-				logger.warn("Streaming not yet implemented for OpenAiCompatible, using non-streaming mode");
-			}
 			return generateNonStreaming(requestBuilder.build());
 
 		} catch (Exception e) {
 			logger.error("Error generating content from OpenAI-compatible endpoint", e);
 			return Flowable.error(e);
 		} finally {
-			MDC.remove("model");
+			restoreMdc(previousMdc);
 		}
 	}
 
 	private Flowable<LlmResponse> generateNonStreaming(Request request) {
 		return Flowable.create(emitter -> {
+			Call call = HTTP_CLIENT.newCall(request);
+			emitter.setCancellable(call::cancel);
+
+			String previousMdc = MDC.get("model");
 			MDC.put("model", model());
-			try {
-				Response response = httpClient.newCall(request).execute();
+			try (Response response = call.execute()) {
+				if (emitter.isCancelled()) {
+					return;
+				}
+				ResponseBody body = response.body();
 				if (!response.isSuccessful()) {
-					String errorBody = response.body() != null ? response.body().string() : "No error details";
+					String errorBody = body != null ? body.string() : "No error details";
 					logger.error("OpenAI-compatible API error code={} body={}", response.code(), errorBody);
 					emitter.onError(new IOException(
 							"OpenAI-compatible API error: " + response.code() + " - " + errorBody));
 					return;
 				}
+				if (body == null) {
+					emitter.onError(new IOException("OpenAI-compatible API error: empty response body"));
+					return;
+				}
 
-				String responseBody = response.body().string();
+				String responseBody = body.string();
 				logger.debug("Received response: {}", responseBody);
 
 				JsonNode jsonResponse = objectMapper.readTree(responseBody);
 				LlmResponse llmResponse = parseOpenAiResponse(jsonResponse);
 
-				emitter.onNext(llmResponse);
-				emitter.onComplete();
+				if (!emitter.isCancelled()) {
+					emitter.onNext(llmResponse);
+					emitter.onComplete();
+				}
 
 			} catch (Exception e) {
 				logger.error("Error processing OpenAI-compatible response", e);
-				emitter.onError(e);
+				if (!emitter.isCancelled()) {
+					emitter.onError(e);
+				}
 			} finally {
-				MDC.remove("model");
+				restoreMdc(previousMdc);
 			}
 		}, io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
+	}
+
+	private static void restoreMdc(String previousValue) {
+		if (previousValue == null) {
+			MDC.remove("model");
+		} else {
+			MDC.put("model", previousValue);
+		}
 	}
 
 	/**
@@ -154,11 +207,6 @@ public class OpenAiCompatible extends BaseLlm {
 
 		ArrayNode messages = objectMapper.createArrayNode();
 		List<Content> contents = llmRequest.contents();
-
-		boolean hasToolMessages = contents.stream()
-				.filter(c -> c.parts().isPresent())
-				.flatMap(c -> c.parts().get().stream())
-				.anyMatch(p -> p.functionResponse().isPresent());
 
 		List<String> systemInstructions = llmRequest.getSystemInstructions();
 		if (systemInstructions != null && !systemInstructions.isEmpty()) {
@@ -189,18 +237,21 @@ public class OpenAiCompatible extends BaseLlm {
 							toolCalls = objectMapper.createArrayNode();
 						}
 						String functionName = functionCall.name().orElse("unknown");
-						String toolCallId = functionCall.id().orElse("call_" + functionName);
+						String toolCallId = functionCall.id().orElseGet(OpenAiCompatible::generateToolCallId);
 						ObjectNode toolCall = objectMapper.createObjectNode();
 						toolCall.put("id", toolCallId);
 						toolCall.put("type", "function");
 						ObjectNode function = objectMapper.createObjectNode();
 						function.put("name", functionName);
-						try {
-							function.put("arguments", objectMapper.writeValueAsString(functionCall.args()));
-						} catch (Exception e) {
-							logger.warn("Failed to serialize function args", e);
-							function.put("arguments", "{}");
+						String argsJson = "{}";
+						if (functionCall.args().isPresent()) {
+							try {
+								argsJson = objectMapper.writeValueAsString(functionCall.args().get());
+							} catch (Exception e) {
+								logger.warn("Failed to serialize function args", e);
+							}
 						}
+						function.put("arguments", argsJson);
 						toolCall.set("function", function);
 						toolCalls.add(toolCall);
 					}
@@ -211,12 +262,19 @@ public class OpenAiCompatible extends BaseLlm {
 			}
 
 			// Tool responses: emit one OpenAI "tool" role message per response, preserving
-			// the originating tool_call_id so the model can correlate.
+			// the originating tool_call_id so the model can correlate. The "name" field on
+			// tool messages is legacy (from the deprecated "function" role) and ignored by
+			// modern endpoints, so it is omitted.
 			if (!functionResponseParts.isEmpty()) {
 				for (Part part : functionResponseParts) {
 					var functionResponse = part.functionResponse().get();
 					String responseName = functionResponse.name().orElse("unknown");
-					String toolCallId = functionResponse.id().orElse("call_" + responseName);
+					String toolCallId = functionResponse.id().orElseGet(() -> {
+						String fallback = generateToolCallId();
+						logger.warn("functionResponse for '{}' has no id; generated {} as fallback."
+								+ " Tool-call correlation may be wrong.", responseName, fallback);
+						return fallback;
+					});
 					String responseJson;
 					try {
 						responseJson = objectMapper.writeValueAsString(functionResponse.response());
@@ -227,7 +285,6 @@ public class OpenAiCompatible extends BaseLlm {
 					ObjectNode toolMessage = objectMapper.createObjectNode();
 					toolMessage.put("role", "tool");
 					toolMessage.put("tool_call_id", toolCallId);
-					toolMessage.put("name", responseName);
 					toolMessage.put("content", responseJson);
 					messages.add(toolMessage);
 				}
@@ -256,47 +313,43 @@ public class OpenAiCompatible extends BaseLlm {
 		if (llmRequest.tools() != null && !llmRequest.tools().isEmpty()) {
 			ArrayNode toolsArray = objectMapper.createArrayNode();
 			for (BaseTool tool : llmRequest.tools().values()) {
-				if (tool.declaration().isPresent()) {
-					FunctionDeclaration fd = tool.declaration().get();
-					ObjectNode toolObj = objectMapper.createObjectNode();
-					toolObj.put("type", "function");
-					ObjectNode function = objectMapper.createObjectNode();
-					function.put("name", fd.name().orElse(tool.name()));
-					function.put("description", fd.description().orElse(tool.description()));
-
-					if (fd.parameters().isPresent()) {
-						try {
-							String schemaJson = fd.parameters().get().toJson();
-							JsonNode schemaNode = objectMapper.readTree(schemaJson);
-							lowercaseSchemaTypes(schemaNode);
-							function.set("parameters", schemaNode);
-						} catch (Exception e) {
-							logger.warn("Failed to convert schema to JSON for tool {}: {}",
-									fd.name().orElse(tool.name()), e.getMessage());
-							ObjectNode emptySchema = objectMapper.createObjectNode();
-							emptySchema.put("type", "object");
-							emptySchema.set("properties", objectMapper.createObjectNode());
-							function.set("parameters", emptySchema);
-						}
-					} else {
-						ObjectNode emptySchema = objectMapper.createObjectNode();
-						emptySchema.put("type", "object");
-						emptySchema.set("properties", objectMapper.createObjectNode());
-						function.set("parameters", emptySchema);
-					}
-
-					toolObj.set("function", function);
-					toolsArray.add(toolObj);
+				if (tool.declaration().isEmpty()) {
+					logger.warn("Tool {} has no declaration; skipping (model will not see it)", tool.name());
+					continue;
 				}
+				FunctionDeclaration fd = tool.declaration().get();
+				ObjectNode toolObj = objectMapper.createObjectNode();
+				toolObj.put("type", "function");
+				ObjectNode function = objectMapper.createObjectNode();
+				function.put("name", fd.name().orElse(tool.name()));
+				function.put("description", fd.description().orElse(tool.description()));
+
+				if (fd.parameters().isPresent()) {
+					try {
+						String schemaJson = fd.parameters().get().toJson();
+						JsonNode schemaNode = objectMapper.readTree(schemaJson);
+						lowercaseSchemaTypes(schemaNode);
+						function.set("parameters", schemaNode);
+					} catch (Exception e) {
+						logger.warn("Failed to convert schema to JSON for tool {}: {}",
+								fd.name().orElse(tool.name()), e.getMessage());
+						function.set("parameters", emptyObjectSchema());
+					}
+				} else {
+					function.set("parameters", emptyObjectSchema());
+				}
+
+				toolObj.set("function", function);
+				toolsArray.add(toolObj);
 			}
 
 			if (toolsArray.size() > 0) {
 				requestBody.set("tools", toolsArray);
-				if (hasToolMessages) {
-					requestBody.put("tool_choice", "auto");
-				} else {
-					requestBody.put("tool_choice", "required");
-				}
+				// "auto" lets native-tool-calling models (Claude, GPT-4) decide whether the
+				// query needs a tool. Forcing "required" first-turn — as VllmGemma does to
+				// nudge Gemma into using tools — is unnecessary here and prevents direct
+				// answers to simple queries.
+				requestBody.put("tool_choice", "auto");
 			}
 		}
 
@@ -305,15 +358,37 @@ public class OpenAiCompatible extends BaseLlm {
 			config.maxOutputTokens().ifPresent(max -> requestBody.put("max_tokens", max));
 			config.temperature().ifPresent(temp -> requestBody.put("temperature", temp));
 			config.topP().ifPresent(p -> requestBody.put("top_p", p));
-			config.topK().ifPresent(k -> requestBody.put("top_k", k));
+			// top_k is intentionally not forwarded — OpenAI rejects unknown params and many
+			// LiteLLM-OpenAI-compat shims drop or 400 on it. Anthropic prefers top_p anyway.
 			config.stopSequences().ifPresent(stops -> {
 				ArrayNode stopArray = objectMapper.createArrayNode();
-				stops.forEach(stopArray::add);
-				requestBody.set("stop", stopArray);
+				// Anthropic via LiteLLM rejects whitespace-only stop sequences with
+				// "stop_sequences: each stop sequence must contain non-whitespace".
+				stops.stream()
+						.filter(s -> s != null && !s.isBlank())
+						.forEach(stopArray::add);
+				if (!stopArray.isEmpty()) {
+					requestBody.set("stop", stopArray);
+				}
 			});
 		}
 
 		return requestBody;
+	}
+
+	private ObjectNode emptyObjectSchema() {
+		ObjectNode emptySchema = objectMapper.createObjectNode();
+		emptySchema.put("type", "object");
+		emptySchema.set("properties", objectMapper.createObjectNode());
+		return emptySchema;
+	}
+
+	/**
+	 * Generates a tool-call ID compatible with both OpenAI ({@code call_<24-hex>}) and
+	 * Anthropic-via-LiteLLM (which maps it to {@code tool_use_id} unchanged).
+	 */
+	private static String generateToolCallId() {
+		return "call_" + UUID.randomUUID().toString().replace("-", "").substring(0, 24);
 	}
 
 	/**
@@ -329,17 +404,53 @@ public class OpenAiCompatible extends BaseLlm {
 			}
 
 			JsonNode message = choices.get(0).get("message");
+			if (message == null || !message.isObject()) {
+				throw new IOException("Invalid response format: choice missing message");
+			}
 
-			if (message.has("tool_calls") && message.get("tool_calls").isArray()
-					&& message.get("tool_calls").size() > 0) {
+			JsonNode toolCallsNode = message.get("tool_calls");
+			boolean hasToolCalls = toolCallsNode != null && toolCallsNode.isArray() && !toolCallsNode.isEmpty();
+
+			if (hasToolCalls) {
 				List<Part> parts = new ArrayList<>();
-				for (JsonNode toolCallNode : message.get("tool_calls")) {
-					String toolCallId = toolCallNode.get("id").asText();
-					String toolName = toolCallNode.get("function").get("name").asText();
-					String argumentsJson = toolCallNode.get("function").get("arguments").asText();
+				int parseFailures = 0;
+				for (JsonNode toolCallNode : toolCallsNode) {
+					JsonNode idNode = toolCallNode.get("id");
+					String toolCallId = (idNode != null && !idNode.isNull() && !idNode.asText().isEmpty())
+							? idNode.asText()
+							: generateToolCallId();
+
+					JsonNode functionNode = toolCallNode.get("function");
+					if (functionNode == null || !functionNode.isObject()) {
+						logger.warn("tool_call missing 'function' object, skipping: {}", toolCallNode);
+						parseFailures++;
+						continue;
+					}
+					JsonNode nameNode = functionNode.get("name");
+					if (nameNode == null || nameNode.isNull() || nameNode.asText().isEmpty()) {
+						logger.warn("tool_call.function missing 'name', skipping: {}", toolCallNode);
+						parseFailures++;
+						continue;
+					}
+					String toolName = nameNode.asText();
+
+					// Spec says arguments is a JSON string, but some proxies (vLLM with certain
+					// tool parsers, older LiteLLM Anthropic shims) emit it as a parsed object.
+					JsonNode argsNode = functionNode.get("arguments");
+					String argumentsJson;
+					if (argsNode == null || argsNode.isNull()) {
+						argumentsJson = "";
+					} else if (argsNode.isTextual()) {
+						argumentsJson = argsNode.asText();
+					} else {
+						argumentsJson = argsNode.toString();
+					}
+
 					try {
-						Map<String, Object> args = objectMapper.readValue(argumentsJson,
-								objectMapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class));
+						Map<String, Object> args = (argumentsJson == null || argumentsJson.isBlank())
+								? Map.of()
+								: objectMapper.readValue(argumentsJson,
+										objectMapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class));
 						logger.info("Preparing to call tool toolName={} args={}", toolName, args);
 						parts.add(Part.builder()
 								.functionCall(FunctionCall.builder()
@@ -350,6 +461,7 @@ public class OpenAiCompatible extends BaseLlm {
 								.build());
 					} catch (Exception e) {
 						logger.error("Failed to parse tool call arguments argumentsJson={}", argumentsJson, e);
+						parseFailures++;
 					}
 				}
 				if (!parts.isEmpty()) {
@@ -359,6 +471,11 @@ public class OpenAiCompatible extends BaseLlm {
 									.parts(parts)
 									.build())
 							.build();
+				}
+				if (parseFailures > 0) {
+					// All tool calls failed to parse — surface as error rather than masquerade
+					// as an empty text response, which would silently break the agent loop.
+					throw new IOException("All " + parseFailures + " tool_calls failed to parse");
 				}
 			}
 
@@ -387,6 +504,9 @@ public class OpenAiCompatible extends BaseLlm {
 	 * ADK's {@code Schema.toJson()} emits uppercase JSON-Schema types ({@code STRING},
 	 * {@code OBJECT}); OpenAI expects lowercase. Recursively lowercases every {@code type}
 	 * value in place.
+	 *
+	 * <p>Children are snapshotted before recursion so future edits that add or remove
+	 * sibling keys cannot trigger {@code ConcurrentModificationException}.
 	 */
 	private void lowercaseSchemaTypes(JsonNode node) {
 		if (node == null) {
@@ -394,13 +514,13 @@ public class OpenAiCompatible extends BaseLlm {
 		}
 		if (node.isObject()) {
 			ObjectNode objNode = (ObjectNode) node;
-			if (objNode.has("type")) {
-				JsonNode typeNode = objNode.get("type");
-				if (typeNode.isTextual()) {
-					objNode.put("type", typeNode.asText().toLowerCase());
-				}
+			JsonNode typeNode = objNode.get("type");
+			if (typeNode != null && typeNode.isTextual()) {
+				objNode.put("type", typeNode.asText().toLowerCase());
 			}
-			objNode.fields().forEachRemaining(entry -> lowercaseSchemaTypes(entry.getValue()));
+			List<JsonNode> children = new ArrayList<>();
+			objNode.fields().forEachRemaining(entry -> children.add(entry.getValue()));
+			children.forEach(this::lowercaseSchemaTypes);
 		} else if (node.isArray()) {
 			node.forEach(this::lowercaseSchemaTypes);
 		}

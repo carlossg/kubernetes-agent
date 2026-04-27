@@ -102,12 +102,22 @@ public class KubernetesAgent {
 	 */
 	private static void registerOpenAiCompatibleModels() {
 		String apiBase = System.getenv("OPENAI_COMPATIBLE_API_BASE");
-		if (apiBase == null || apiBase.isEmpty()) {
+		if (apiBase == null || apiBase.isBlank()) {
 			logger.info("OPENAI_COMPATIBLE_API_BASE not set, OpenAI-compatible models not registered");
 			return;
 		}
 		String apiKey = System.getenv().getOrDefault("OPENAI_COMPATIBLE_API_KEY", "not-needed");
 		String pattern = System.getenv().getOrDefault("OPENAI_COMPATIBLE_MODEL_PATTERN", "claude-.*");
+		try {
+			java.util.regex.Pattern.compile(pattern);
+		} catch (java.util.regex.PatternSyntaxException e) {
+			// Fail open: skip registration rather than abort static init (which would
+			// CrashLoop the pod with NoClassDefFoundError on every reference to
+			// KubernetesAgent).
+			logger.error("Invalid OPENAI_COMPATIBLE_MODEL_PATTERN '{}', skipping registration. Error: {}",
+					pattern, e.getMessage());
+			return;
+		}
 		logger.info("Registering OpenAI-compatible models matching '{}' against API base: {}", pattern, apiBase);
 		LlmRegistry.registerLlm(pattern, modelName ->
 			OpenAiCompatible.builder()
@@ -135,8 +145,8 @@ public class KubernetesAgent {
 		// Add OpenAI-compatible models if configured
 		String openAiCompatibleApiBase = System.getenv("OPENAI_COMPATIBLE_API_BASE");
 		String openAiCompatibleModel = System.getenv("OPENAI_COMPATIBLE_MODEL");
-		if (openAiCompatibleApiBase != null && !openAiCompatibleApiBase.isEmpty()
-				&& openAiCompatibleModel != null && !openAiCompatibleModel.isEmpty()) {
+		if (openAiCompatibleApiBase != null && !openAiCompatibleApiBase.isBlank()
+				&& openAiCompatibleModel != null && !openAiCompatibleModel.isBlank()) {
 			AVAILABLE_MODELS.add(openAiCompatibleModel);
 		}
 

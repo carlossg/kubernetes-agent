@@ -9,6 +9,7 @@ resources:
   - gemma-1b-deployment.yaml
   - gemma-9b-deployment.yaml
   - gemma-27b-deployment.yaml
+  - gemma-4-26b-deployment.yaml
 
 labels:
   - pairs:

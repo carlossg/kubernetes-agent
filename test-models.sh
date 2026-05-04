@@ -3,7 +3,7 @@
 # Usage:
 #   ./test-models.sh                          # interactive: choose models
 #   ./test-models.sh gemini gemma-1b          # test Gemini + Gemma 1B
-#   ./test-models.sh -m gemini,gemma-1b,gemma-9b
+#   ./test-models.sh -m gemini,gemma-1b,gemma-9b,gemma-4-26b
 #   ./test-models.sh --no-wait-vllm gemma-1b  # skip vLLM readiness wait
 set -e
 
@@ -16,11 +16,12 @@ get_model_info() {
 		gemini)     echo "gemini-2.5-flash NONE NONE" ;;
 		gemma-1b)   echo "gemma-3-1b-it gemma-1b-server 8000" ;;
 		gemma-9b)   echo "gemma-2-9b-it gemma-9b-server 8000" ;;
+		gemma-4-26b) echo "gemma-4-26b-a4b-it gemma-4-26b-server 8000" ;;
 		*)          echo "" ;;
 	esac
 }
 
-VALID_MODELS="gemini gemma-1b gemma-9b"
+VALID_MODELS="gemini gemma-1b gemma-9b gemma-4-26b"
 VLLM_WAIT_RETRIES=180
 WAIT_VLLM=true
 
@@ -38,7 +39,7 @@ while [ $# -gt 0 ]; do
 			;;
 		-h|--help)
 			echo "Usage: $0 [OPTIONS] [MODEL...]"
-			echo "  Models: gemini, gemma-1b, gemma-9b"
+			echo "  Models: gemini, gemma-1b, gemma-9b, gemma-4-26b"
 			echo "  -m, --models LIST   Comma-separated model list"
 			echo "  --no-wait-vllm      Skip waiting for vLLM /v1/models"
 			echo "  -h, --help          This help"
@@ -46,7 +47,7 @@ while [ $# -gt 0 ]; do
 			echo "Examples:"
 			echo "  $0                    # interactive"
 			echo "  $0 gemini gemma-1b"
-			echo "  $0 -m gemini,gemma-1b,gemma-9b"
+			echo "  $0 -m gemini,gemma-1b,gemma-9b,gemma-4-26b"
 			exit 0
 			;;
 		-*)
@@ -67,9 +68,10 @@ done
 # Resolve model list: from -m/positional or interactive
 if [ -z "$MODELS_STR" ]; then
 	echo "Select models to test (comma-separated or space-separated):"
-	echo "  gemini     - Gemini 2.5 Flash (cloud)"
-	echo "  gemma-1b   - Gemma 3 1B (vLLM)"
-	echo "  gemma-9b   - Gemma 2 9B (vLLM)"
+	echo "  gemini       - Gemini 2.5 Flash (cloud)"
+	echo "  gemma-1b     - Gemma 3 1B (vLLM)"
+	echo "  gemma-9b     - Gemma 2 9B (vLLM)"
+	echo "  gemma-4-26b  - Gemma 4 26B A4B Q4_K_M GGUF (vLLM)"
 	echo ""
 	printf "Models [gemini, gemma-1b, gemma-9b]: "
 	read -r MODELS_STR

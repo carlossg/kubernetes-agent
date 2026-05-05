@@ -1,0 +1,90 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "listPods",
+      "description": "List pods in a Kubernetes namespace filtered by a label selector.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "namespace": {"type": "string", "description": "The Kubernetes namespace"},
+          "labelSelector": {"type": "string", "description": "Label selector to filter pods (e.g., 'role=stable' or 'role=canary')"}
+        },
+        "required": ["namespace", "labelSelector"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "getLogs",
+      "description": "Get recent logs for a specific pod.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "namespace": {"type": "string", "description": "The Kubernetes namespace"},
+          "podName": {"type": "string", "description": "The name of the pod"}
+        },
+        "required": ["namespace", "podName"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "getEvents",
+      "description": "Get recent events in a Kubernetes namespace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "namespace": {"type": "string", "description": "The Kubernetes namespace"}
+        },
+        "required": ["namespace"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "debugPod",
+      "description": "Get debug information for a specific pod (status, conditions, container states).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "namespace": {"type": "string", "description": "The Kubernetes namespace of the pod"},
+          "podName": {"type": "string", "description": "The name of the pod to debug"}
+        },
+        "required": ["namespace", "podName"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "getMetrics",
+      "description": "Get CPU and memory metrics for a specific pod.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "namespace": {"type": "string", "description": "The Kubernetes namespace"},
+          "podName": {"type": "string", "description": "The name of the pod"}
+        },
+        "required": ["namespace", "podName"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "inspectResources",
+      "description": "Inspect the deployments, services, and configmaps in a namespace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "namespace": {"type": "string", "description": "The Kubernetes namespace"}
+        },
+        "required": ["namespace"]
+      }
+    }
+  }
+]

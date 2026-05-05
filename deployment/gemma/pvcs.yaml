@@ -49,3 +49,42 @@ spec:
   resources:
     requests:
       storage: 120Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gemma-4-26b-q3-model-cache
+  namespace: gemma-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-rwo
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gemma-4-26b-q5-model-cache
+  namespace: gemma-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-rwo
+  resources:
+    requests:
+      storage: 130Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gemma-4-26b-q6-model-cache
+  namespace: gemma-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-rwo
+  resources:
+    requests:
+      storage: 150Gi

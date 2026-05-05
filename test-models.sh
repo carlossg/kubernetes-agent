@@ -17,11 +17,14 @@ get_model_info() {
 		gemma-1b)   echo "gemma-3-1b-it gemma-1b-server 8000" ;;
 		gemma-9b)   echo "gemma-2-9b-it gemma-9b-server 8000" ;;
 		gemma-4-26b) echo "gemma-4-26b-a4b-it gemma-4-26b-server 8000" ;;
+		gemma-4-26b-q3) echo "gemma-4-26b-a4b-it-q3 gemma-4-26b-q3-server 8000" ;;
+		gemma-4-26b-q5) echo "gemma-4-26b-a4b-it-q5 gemma-4-26b-q5-server 8000" ;;
+		gemma-4-26b-q6) echo "gemma-4-26b-a4b-it-q6 gemma-4-26b-q6-server 8000" ;;
 		*)          echo "" ;;
 	esac
 }
 
-VALID_MODELS="gemini gemma-1b gemma-9b gemma-4-26b"
+VALID_MODELS="gemini gemma-1b gemma-9b gemma-4-26b gemma-4-26b-q3 gemma-4-26b-q5 gemma-4-26b-q6"
 VLLM_WAIT_RETRIES=180
 WAIT_VLLM=true
 
@@ -39,7 +42,7 @@ while [ $# -gt 0 ]; do
 			;;
 		-h|--help)
 			echo "Usage: $0 [OPTIONS] [MODEL...]"
-			echo "  Models: gemini, gemma-1b, gemma-9b, gemma-4-26b"
+			echo "  Models: gemini, gemma-1b, gemma-9b, gemma-4-26b, gemma-4-26b-q3, gemma-4-26b-q5, gemma-4-26b-q6"
 			echo "  -m, --models LIST   Comma-separated model list"
 			echo "  --no-wait-vllm      Skip waiting for vLLM /v1/models"
 			echo "  -h, --help          This help"
@@ -72,6 +75,9 @@ if [ -z "$MODELS_STR" ]; then
 	echo "  gemma-1b     - Gemma 3 1B (vLLM)"
 	echo "  gemma-9b     - Gemma 2 9B (vLLM)"
 	echo "  gemma-4-26b  - Gemma 4 26B A4B Q4_K_M GGUF (vLLM)"
+	echo "  gemma-4-26b-q3 - Gemma 4 26B A4B Q3_K_M GGUF (vLLM, longer context)"
+	echo "  gemma-4-26b-q5 - Gemma 4 26B A4B Q5_K_M GGUF (vLLM, higher quality)"
+	echo "  gemma-4-26b-q6 - Gemma 4 26B A4B Q6_K GGUF (vLLM, highest quality on L4)"
 	echo ""
 	printf "Models [gemini, gemma-1b, gemma-9b]: "
 	read -r MODELS_STR

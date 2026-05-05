@@ -81,6 +81,10 @@ Deployments are split by model size; each has its own manifest and PVC:
 | **gemma-1b-server** | google/gemma-3-1b-it | gemma-1b-deployment.yaml | 1× L4 | ✅ Default for small footprint |
 | **gemma-9b-server** | google/gemma-2-9b-it | gemma-9b-deployment.yaml | 1× L4 | max_model_len 1024, gpu_memory_utilization 0.95 |
 | **gemma-27b-server** | google/gemma-3-27b-it | gemma-27b-deployment.yaml | 1× L4 (quantized) or A100 | 8-bit quantization; may OOM on L4 |
+| **gemma-4-26b-server** | ggml-org/gemma-4-26B-A4B-it-GGUF:Q4_K_M | gemma-4-26b-deployment.yaml | 1× L4 | MoE 26B/4B-active, balanced default |
+| **gemma-4-26b-q3-server** | ggml-org/gemma-4-26B-A4B-it-GGUF:Q3_K_M | gemma-4-26b-q3-deployment.yaml | 1× L4 | smallest, room for 8K context |
+| **gemma-4-26b-q5-server** | ggml-org/gemma-4-26B-A4B-it-GGUF:Q5_K_M | gemma-4-26b-q5-deployment.yaml | 1× L4 | higher quality, max_model_len 3072 |
+| **gemma-4-26b-q6-server** | ggml-org/gemma-4-26B-A4B-it-GGUF:Q6_K | gemma-4-26b-q6-deployment.yaml | 1× L4 | highest quality that fits, max_model_len 1536 |
 
 The agent uses one vLLM endpoint at a time via `VLLM_API_BASE` and `VLLM_MODEL`. For comparison tests, use `test-three-models.sh` (runs Gemini, then 1B, then 9B sequentially).
 

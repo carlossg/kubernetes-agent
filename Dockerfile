@@ -1,15 +1,18 @@
+# syntax=docker/dockerfile:1.7
 FROM maven:3.9-eclipse-temurin-25 AS build
 
 WORKDIR /app
 
-# Copy pom.xml and download dependencies
+# Pre-fetch dependencies into a cache mount so they survive across builds
+# even when the GHA layer cache is evicted.
 COPY pom.xml .
-RUN mvn dependency:go-offline -B
-RUN mvn dependency:resolve -B
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn dependency:go-offline -B
 
 # Copy source and build
 COPY src ./src
-RUN mvn package -DskipTests
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn package -DskipTests
 
 # Runtime image
 FROM eclipse-temurin:25-jre-jammy

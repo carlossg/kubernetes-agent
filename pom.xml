@@ -16,7 +16,7 @@
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<maven.compiler.source>25</maven.compiler.source>
 		<maven.compiler.target>25</maven.compiler.target>
-		<adk.version>0.3.0</adk.version>
+		<adk.version>1.2.0</adk.version>
 		<spring.boot.version>3.5.7</spring.boot.version>
 	</properties>
 
@@ -132,7 +132,7 @@
 			<plugin>
 				<groupId>com.google.adk</groupId>
 				<artifactId>google-adk-maven-plugin</artifactId>
-				<version>0.3.0</version>
+				<version>${adk.version}</version>
 			</plugin>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>

@@ -21,7 +21,7 @@ class A2AResponseTest {
 		var response = controller.health();
 		
 		assertNotNull(response);
-		assertEquals(200, response.getStatusCodeValue());
+		assertEquals(200, response.getStatusCode().value());
 		assertNotNull(response.getBody());
 		assertEquals("healthy", response.getBody().get("status"));
 		assertEquals("KubernetesAgent", response.getBody().get("agent"));

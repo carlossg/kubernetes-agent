@@ -204,12 +204,6 @@ public class VllmGemma extends BaseLlm {
 		
 		List<Content> contents = llmRequest.contents();
 
-		// Check if there are any tool messages in the conversation
-		boolean hasToolMessages = contents.stream()
-			.filter(c -> c.parts().isPresent())
-			.flatMap(c -> c.parts().get().stream())
-			.anyMatch(p -> p.functionResponse().isPresent());
-
 		// Prepend System Instructions if present
 		List<String> systemInstructions = llmRequest.getSystemInstructions();
 		if (systemInstructions != null && !systemInstructions.isEmpty()) {
@@ -419,15 +413,14 @@ public class VllmGemma extends BaseLlm {
 			
 			if (toolsArray.size() > 0) {
 				requestBody.set("tools", toolsArray);
-				// Only use "required" on first turn (when there are no tool messages in history)
-				// On subsequent turns use "auto" to allow the model to decide whether to call more tools or respond
-				if (hasToolMessages) {
-					requestBody.put("tool_choice", "auto");
-					logger.info("Added {} tools to OpenAI request with tool_choice=auto (subsequent turn)", toolsArray.size());
-				} else {
-					requestBody.put("tool_choice", "required");
-					logger.info("Added {} tools to OpenAI request with tool_choice=required (first turn)", toolsArray.size());
-				}
+				// Always use "auto" — small Gemma variants (e.g. 4B E4B) generate tokens
+				// that the vLLM gemma4 tool-call parser can't extract when forced via
+				// "required", returning an empty content + empty tool_calls and
+				// silently discarding the 100+ generated tokens. With "auto" the model
+				// can emit text/JSON directly when it isn't able to produce a
+				// parser-compatible tool call.
+				requestBody.put("tool_choice", "auto");
+				logger.info("Added {} tools to OpenAI request with tool_choice=auto", toolsArray.size());
 			}
 		}
 

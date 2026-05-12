@@ -4,15 +4,18 @@ FROM maven:3.9-eclipse-temurin-25 AS build
 WORKDIR /app
 
 # Pre-fetch dependencies into a cache mount so they survive across builds
-# even when the GHA layer cache is evicted.
+# even when the GHA layer cache is evicted. Mount only the repository
+# subdirectory so any base-image settings.xml / config under ~/.m2 stays
+# visible.
 COPY pom.xml .
-RUN --mount=type=cache,target=/root/.m2 \
+RUN --mount=type=cache,target=/root/.m2/repository \
     mvn dependency:go-offline -B
 
-# Copy source and build
+# Copy source and build. -Dmaven.test.skip=true also skips test compilation
+# (vs -DskipTests which only skips execution), saving more time.
 COPY src ./src
-RUN --mount=type=cache,target=/root/.m2 \
-    mvn package -DskipTests
+RUN --mount=type=cache,target=/root/.m2/repository \
+    mvn package -B -Dmaven.test.skip=true
 
 # Runtime image
 FROM eclipse-temurin:25-jre-jammy

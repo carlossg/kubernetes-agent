@@ -24,26 +24,33 @@ TEST_NAMESPACE="${NAMESPACE:-default}"
 TEST_POD_NAME="${POD_NAME:-test-pod}"
 CONTEXT="${CONTEXT:-kind-rollouts-plugin-metric-ai-test-e2e}"
 LOCAL_URL="${LOCAL_URL:-http://localhost:8080}"
+LOCAL_PORT="${LOCAL_PORT:-18080}"
 
 function _kubectl() {
 	kubectl --context "$CONTEXT" -n "$AGENT_NAMESPACE" "$@"
 }
 
 function _curl() {
-	if [[ "$MODE" == "local" ]]; then
-		curl "$@"
-	else
-		_kubectl exec deployment/kubernetes-agent -- curl "$@"
-	fi
+	curl "$@"
 }
 
 function _get_base_url() {
 	if [[ "$MODE" == "local" ]]; then
 		echo "$LOCAL_URL"
 	else
-		echo "http://localhost:8080"
+		echo "http://localhost:$LOCAL_PORT"
 	fi
 }
+
+# Start port-forward for k8s mode
+if [[ "$MODE" == "k8s" ]]; then
+	# Kill any stale port-forward on our port from previous runs
+	pkill -f "port-forward.*kubernetes-agent" 2>/dev/null || true
+	_kubectl port-forward deployment/kubernetes-agent "$LOCAL_PORT:8080" &>/dev/null &
+	PORT_FORWARD_PID=$!
+	trap "kill $PORT_FORWARD_PID 2>/dev/null" EXIT
+	sleep 2
+fi
 
 echo "🧪 Testing Kubernetes AI Agent"
 echo "📍 Mode: $MODE"
@@ -99,24 +106,17 @@ EOF
 )
 
 echo "Sending request..."
-if [[ "$MODE" == "local" ]]; then
-	if ! ANALYSIS_RESPONSE=$(curl -sSf -X POST \
-		-H 'Content-Type: application/json' \
-		-d "$REQUEST_PAYLOAD" \
-		"$BASE_URL/a2a/analyze"); then
-		echo "❌ Request failed. Agent may be unresponsive or rate limited."
-		echo "   Check if agent is running on $LOCAL_URL"
-		exit 1
-	fi
-else
-	if ! ANALYSIS_RESPONSE=$(_kubectl exec deployment/kubernetes-agent -- sh -c "curl -sSf -X POST \
-		-H 'Content-Type: application/json' \
-		-d '$REQUEST_PAYLOAD' \
-		http://localhost:8080/a2a/analyze"); then
-		echo "❌ Request failed. Agent may be unresponsive or rate limited."
+if ! ANALYSIS_RESPONSE=$(_curl -sSf -X POST \
+	-H 'Content-Type: application/json' \
+	-d "$REQUEST_PAYLOAD" \
+	"$BASE_URL/a2a/analyze"); then
+	echo "❌ Request failed. Agent may be unresponsive or rate limited."
+	if [[ "$MODE" == "k8s" ]]; then
 		echo "   Check agent logs: kubectl logs --context $CONTEXT -n $AGENT_NAMESPACE deployment/kubernetes-agent"
-		exit 1
+	else
+		echo "   Check if agent is running on $LOCAL_URL"
 	fi
+	exit 1
 fi
 
 echo "Response:"

@@ -416,14 +416,26 @@ public class A2AController {
 							session.id(),
 							userMsg);
 
-					// Collect results and log tool executions
+					// Collect results and log tool executions.
+					// Only keep visible text from final-response events — skip tool-call/response
+					// events and Gemini "thought" parts so the JSON parser sees the model's
+					// actual answer, not the debug-style "Function Call: FunctionCall{...}" dump.
 					List<String> eventResponses = new ArrayList<>();
 					events.blockingForEach(event -> {
 						KubernetesAgent.logToolExecution(event, modelName);
-						String content = event.stringifyContent();
-						if (content != null && !content.isEmpty()) {
-							eventResponses.add(content);
+						if (!event.finalResponse()) {
+							return;
 						}
+						event.content().flatMap(Content::parts).ifPresent(parts -> {
+							for (Part part : parts) {
+								if (part.thought().orElse(false)) {
+									continue;
+								}
+								part.text()
+										.filter(t -> !t.isBlank())
+										.ifPresent(eventResponses::add);
+							}
+						});
 					});
 
 					long agentEndTime = System.currentTimeMillis();

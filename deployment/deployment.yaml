@@ -49,16 +49,16 @@ spec:
               value: "gemini-3-flash-preview" # Gemini model from Google API
             # vLLM configuration for local Gemma models
             - name: VLLM_MODEL
-              value: "gemma-3-1b-it" # Local vLLM model
+              value: "gemma-4-e4b-it" # Local vLLM model
             - name: VLLM_API_BASE
-              value: "http://gemma-1b-server.gemma-system.svc.cluster.local:8000"
+              value: "http://gemma-4-e4b-server.gemma-system.svc.cluster.local:8000"
             - name: VLLM_API_KEY
               value: "not-needed"  # vLLM doesn't require authentication for in-cluster access
             # Multi-model configuration - ENABLED for Gemini + Gemma parallel analysis
             - name: ENABLE_MULTI_MODEL
               value: "true" # Enable multi-model parallel analysis
             - name: MODELS_TO_USE
-              value: "gemini-3-flash-preview,gemma-3-1b-it" # Both Gemini and Gemma
+              value: "gemini-3-flash-preview,gemma-4-e4b-it" # Both Gemini and Gemma
             - name: VOTING_STRATEGY
               value: "weighted" # Confidence-weighted voting
             - name: JAVA_TOOL_OPTIONS

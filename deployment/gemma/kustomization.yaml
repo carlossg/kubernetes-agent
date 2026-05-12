@@ -9,10 +9,11 @@ resources:
   # - gemma-1b-deployment.yaml
   # - gemma-9b-deployment.yaml
   # - gemma-27b-deployment.yaml
-  - gemma-4-26b-deployment.yaml
+  # - gemma-4-26b-deployment.yaml
   # - gemma-4-26b-q3-deployment.yaml
   # - gemma-4-26b-q5-deployment.yaml
   # - gemma-4-26b-q6-deployment.yaml
+  - gemma-4-e4b-deployment.yaml
 
 labels:
   - pairs:

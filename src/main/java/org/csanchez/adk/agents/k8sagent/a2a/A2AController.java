@@ -8,6 +8,7 @@ import com.google.adk.runner.InMemoryRunner;
 import com.google.adk.tools.BaseTool;
 import com.google.genai.types.Schema;
 import org.csanchez.adk.agents.k8sagent.KubernetesAgent;
+import org.csanchez.adk.agents.k8sagent.remediation.GitHubPRTool;
 import org.csanchez.adk.agents.k8sagent.utils.RetryHelper;
 import com.google.adk.sessions.Session;
 import com.google.genai.types.Content;
@@ -292,11 +293,14 @@ public class A2AController {
 			
 			long totalMultiModelTime = System.currentTimeMillis() - multiModelStartTime;
 			logger.info("Multi-model analysis complete promote={} promoteScore={} rollbackScore={} totalTimeMs={}",
-					aggregated.isPromote(), 
+					aggregated.isPromote(),
 					String.format("%.2f", aggregated.getPromoteScore()),
 					String.format("%.2f", aggregated.getRollbackScore()),
 					totalMultiModelTime);
-			
+
+			maybeCreateRollbackIssue(request, response,
+					aggregated.getPromoteScore(), aggregated.getRollbackScore());
+
 			return ResponseEntity.ok(response);
 			
 		} catch (IllegalArgumentException e) {
@@ -342,8 +346,50 @@ public class A2AController {
 		long totalSingleModelTime = System.currentTimeMillis() - singleModelStartTime;
 		logger.info("Single-model analysis complete model={} promote={} confidence={} totalTimeMs={}",
 				modelName, result.isPromote(), result.getConfidence(), totalSingleModelTime);
-		
+
+		double score = result.getConfidence() / 100.0;
+		maybeCreateRollbackIssue(request, response,
+				result.isPromote() ? score : 0.0,
+				result.isPromote() ? 0.0 : score);
+
 		return ResponseEntity.ok(response);
+	}
+
+	/**
+	 * File a GitHub issue summarising the rollback verdict so downstream
+	 * tooling (e.g. Jules, labelled "jules") can pick it up and propose a fix.
+	 * No-op when the verdict is PROMOTE, when the request has no usable repoUrl,
+	 * or when issue creation fails — the rollout verdict in the response is the
+	 * primary output and must not be blocked by GitHub errors.
+	 */
+	private void maybeCreateRollbackIssue(A2ARequest request, A2AResponse response,
+			double promoteScore, double rollbackScore) {
+		if (response.isPromote()) {
+			return;
+		}
+		Map<String, Object> ctx = request.getContext();
+		if (ctx == null) {
+			return;
+		}
+		String repoUrl = (String) ctx.get("repoUrl");
+		// Skip placeholder repo URLs used by smoke tests
+		if (repoUrl == null || repoUrl.isBlank()
+				|| repoUrl.contains("YOUR_USERNAME") || repoUrl.contains("YOUR_REPO")) {
+			logger.debug("Skipping rollback issue creation: repoUrl is missing or a placeholder");
+			return;
+		}
+		String namespace = (String) ctx.get("namespace");
+		String rolloutName = (String) ctx.get("rolloutName");
+		String votingRationale = response.getVotingRationale() != null
+				? response.getVotingRationale()
+				: "Single-model analysis (no voting)";
+		try {
+			var issue = GitHubPRTool.createRollbackIssue(repoUrl, rolloutName, namespace,
+					response.getModelResults(), promoteScore, rollbackScore, votingRationale);
+			logger.info("Filed rollback issue: {}", issue.getHtmlUrl());
+		} catch (Exception e) {
+			logger.error("Failed to create rollback issue: {}", e.getMessage(), e);
+		}
 	}
 	
 	/**

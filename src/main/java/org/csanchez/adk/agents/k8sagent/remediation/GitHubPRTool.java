@@ -189,6 +189,7 @@ public class GitHubPRTool extends BaseTool {
 				.body(issueBody)
 				.label("canary-rollback")
 				.label("automated")
+				.label("jules")
 				.create();
 		
 		logger.info("Successfully created rollback issue: {}", issue.getHtmlUrl());

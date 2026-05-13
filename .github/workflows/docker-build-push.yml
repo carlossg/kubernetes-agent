@@ -25,8 +25,6 @@ jobs:
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    # Build only amd64 on PRs to keep CI feedback fast; main/tags build both.
-    if: github.event_name != 'pull_request' || matrix.platform == 'linux/amd64'
     permissions:
       contents: read
       packages: write

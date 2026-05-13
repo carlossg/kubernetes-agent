@@ -71,19 +71,12 @@ public class GitHubPRTool extends BaseTool {
 			gitOps.commitAndPush(repoPath, commitMsg, token);
 			
 			// 5. Create PR via GitHub API (library)
-			String repoName = extractRepoName(repoUrl);
-			GHRepository repo = github.getRepository(repoName);
-			
-			String baseBranch = repo.getDefaultBranch();
 			String prTitle = "Fix: " + fixDescription;
 			String prBody = generatePRBody(params);
-			
-			GHPullRequest pr = repo.createPullRequest(
-				prTitle,
-				branchName,
-				baseBranch,
-				prBody
-			);
+			// Intentionally no labels on remediation PRs — the rollback issue
+			// (createRollbackIssue) carries the "jules" label so the Jules agent
+			// picks up the issue, not the PR.
+			GHPullRequest pr = createRemediationPullRequest(repoUrl, branchName, null, prTitle, prBody);
 			
 			logger.info("Successfully created PR: {}", pr.getHtmlUrl());
 			
@@ -195,7 +188,29 @@ public class GitHubPRTool extends BaseTool {
 		logger.info("Successfully created rollback issue: {}", issue.getHtmlUrl());
 		return issue;
 	}
-	
+
+	/**
+	 * Create the remediation pull request for a remediation branch that has
+	 * already been pushed. Deliberately adds no labels — the "jules" label
+	 * lives on the rollback issue so the Jules agent picks up the issue, not
+	 * the PR.
+	 *
+	 * @param baseBranch base branch name, or null to use the repo's default
+	 */
+	public static GHPullRequest createRemediationPullRequest(String repoUrl, String headBranch,
+			String baseBranch, String title, String body) throws IOException {
+		String token = System.getenv("GITHUB_TOKEN");
+		if (token == null || token.isEmpty()) {
+			throw new IllegalStateException("GITHUB_TOKEN environment variable is required");
+		}
+		GitHub github = new GitHubBuilder().withOAuthToken(token).build();
+		GHRepository repo = github.getRepository(extractRepoNameStatic(repoUrl));
+		String base = (baseBranch != null && !baseBranch.isBlank()) ? baseBranch : repo.getDefaultBranch();
+		GHPullRequest pr = repo.createPullRequest(title, headBranch, base, body);
+		logger.info("Successfully created remediation PR: {}", pr.getHtmlUrl());
+		return pr;
+	}
+
 	/**
 	 * Generate issue body for canary rollback
 	 */

@@ -16,6 +16,4 @@ target/
 Thumbs.db
 
 # Secrets
-deployment/secret.yaml
-
-
+secret.yaml

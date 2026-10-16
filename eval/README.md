@@ -1,7 +1,17 @@
-# Gemma 4 quantization eval (k8s debugging)
+# k8s agent eval (canary debugging)
 
-Compare the Gemma-4-26B-A4B quantization variants (Q3_K_M, Q4_K_M, Q5_K_M, Q6_K)
-on the canary-rollout debugging task using Vertex AI Eval.
+Compare model variants on the canary-rollout debugging task using Vertex AI Eval.
+
+Covered variants (select via `--variants`):
+
+| Alias | Model | Endpoint |
+|---|---|---|
+| `gemini-3-flash-preview` | Gemini 3 Flash Preview | Google AI API (needs `GOOGLE_API_KEY`) |
+| `gemma-4-e4b-it` | Gemma 4 E4B (in-cluster vLLM) | `localhost:8000` or `$VLLM_API_BASE` |
+| `gemma-4-26b-q3` | Gemma 4 26B Q3_K_M | `localhost:8001` |
+| `gemma-4-26b` | Gemma 4 26B (fp16) | `localhost:8002` |
+| `gemma-4-26b-q5` | Gemma 4 26B Q5_K_M | `localhost:8003` |
+| `gemma-4-26b-q6` | Gemma 4 26B Q6_K | `localhost:8004` |
 
 Two complementary harnesses live here, each isolating a different failure
 mode that quantization can introduce:
@@ -57,42 +67,49 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 
-# GCP auth for Vertex AI
+# For gemini-3-flash-preview
+export GOOGLE_API_KEY=...
+
+# GCP auth for Vertex AI judges (not needed with --skip-vertex)
 gcloud auth application-default login
 
-# Variants deployed and reachable from kubectl
-kubectl get svc -n gemma-system | grep gemma-4-26b
+# Confirm in-cluster vLLM services exist
+kubectl get svc -n gemma-system
 ```
-
-If you only deployed a subset of variants, pass `--variants` (see below).
 
 ## Run
 
-In one shell, port-forward all four variants:
+### Gemini vs gemma-4-e4b (no Vertex AI, no cluster needed beyond port-forward)
+
+```bash
+kubectl port-forward -n gemma-system svc/gemma-4-e4b-server 8000:8000 &
+python run_eval.py      --skip-vertex --variants gemini-3-flash-preview,gemma-4-e4b-it
+python run_tool_eval.py --skip-vertex --variants gemini-3-flash-preview,gemma-4-e4b-it
+```
+
+### All variants with Vertex AI judges
+
+In one shell, port-forward all vLLM variants:
 
 ```bash
 ./port_forward.sh
 ```
 
-In another shell, run the eval:
+In another shell:
 
 ```bash
-# Reasoning / final JSON
-python run_eval.py --project YOUR_GCP_PROJECT --location us-central1
-
-# Function calling
+python run_eval.py      --project YOUR_GCP_PROJECT --location us-central1
 python run_tool_eval.py --project YOUR_GCP_PROJECT --location us-central1
 ```
 
-To skip the Vertex AI judges and only collect responses + computed metrics
-(useful while iterating on the dataset or prompt):
+To skip the Vertex AI judges and only collect responses + computed metrics:
 
 ```bash
-python run_eval.py --project YOUR_GCP_PROJECT --skip-vertex
+python run_eval.py      --project YOUR_GCP_PROJECT --skip-vertex
 python run_tool_eval.py --project YOUR_GCP_PROJECT --skip-vertex
 ```
 
-To evaluate a subset (same flag on both harnesses):
+To evaluate a subset:
 
 ```bash
 python run_eval.py --project YOUR_GCP_PROJECT \

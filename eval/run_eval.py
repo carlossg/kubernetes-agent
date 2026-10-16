@@ -1,8 +1,8 @@
-"""Compare Gemma 4 quantization variants on a k8s-debugging dataset using Vertex AI Eval.
+"""Compare model variants on a k8s-debugging dataset using Vertex AI Eval.
 
 Inputs:
   - dataset.jsonl: rows of {scenario_id, prompt, reference}
-  - port-forwarded vLLM endpoints, one per variant (see port_forward.sh)
+  - port-forwarded vLLM endpoints for local models (see port_forward.sh)
 
 Outputs (under --out, default ./results):
   - <variant>-responses.jsonl: prompt + raw model response + per-prompt latency
@@ -10,15 +10,18 @@ Outputs (under --out, default ./results):
   - comparison.csv:            side-by-side metrics across variants
 
 Usage:
-  ./port_forward.sh &
+  export GOOGLE_API_KEY=...          # for gemini-3-flash-preview
+  ./port_forward.sh &                # for local vLLM variants
   python run_eval.py --project YOUR_GCP_PROJECT --location us-central1
+  python run_eval.py --project YOUR_GCP_PROJECT --skip-vertex --variants gemini-3-flash-preview,gemma-4-e4b-it
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
@@ -37,9 +40,19 @@ class Variant:
     alias: str
     served_model_name: str
     base_url: str
+    api_key: str = "not-needed"
 
 
 VARIANTS: tuple[Variant, ...] = (
+    # Actively-deployed models (primary comparison)
+    Variant("gemini-3-flash-preview",
+            os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview"),
+            os.environ.get("GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta/openai"),
+            api_key=os.environ.get("GOOGLE_API_KEY", "")),
+    Variant("gemma-4-e4b-it", "gemma-4-e4b-it",
+            os.environ.get("VLLM_API_BASE", "http://localhost:8000") + "/v1",
+            api_key=os.environ.get("VLLM_API_KEY", "not-needed")),
+    # Gemma 4 26B quantization variants (port-forward via port_forward.sh)
     Variant("gemma-4-26b-q3", "gemma-4-26b-a4b-it-q3", "http://localhost:8001/v1"),
     Variant("gemma-4-26b",    "gemma-4-26b-a4b-it",    "http://localhost:8002/v1"),
     Variant("gemma-4-26b-q5", "gemma-4-26b-a4b-it-q5", "http://localhost:8003/v1"),
@@ -90,7 +103,7 @@ def load_dataset(path: Path) -> pd.DataFrame:
 
 
 def call_variant(variant: Variant, prompt: str, max_tokens: int = 1024) -> str:
-    client = OpenAI(base_url=variant.base_url, api_key="not-needed", timeout=120)
+    client = OpenAI(base_url=variant.base_url, api_key=variant.api_key, timeout=120)
     chat = client.chat.completions.create(
         model=variant.served_model_name,
         messages=[{"role": "user", "content": prompt}],
@@ -174,7 +187,7 @@ def evaluate_with_vertex(variant: Variant, df: pd.DataFrame) -> dict[str, float]
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--project", required=True, help="GCP project for Vertex AI")
+    p.add_argument("--project", default=None, help="GCP project for Vertex AI (required unless --skip-vertex)")
     p.add_argument("--location", default="us-central1")
     p.add_argument("--dataset", default=Path(__file__).with_name("dataset.jsonl"), type=Path)
     p.add_argument("--out", default=Path(__file__).with_name("results"), type=Path)
@@ -188,6 +201,8 @@ def main() -> None:
     df = load_dataset(args.dataset)
 
     if not args.skip_vertex:
+        if not args.project:
+            raise SystemExit("--project is required unless --skip-vertex is set")
         vertexai.init(project=args.project, location=args.location)
 
     selected = {v.alias: v for v in VARIANTS}

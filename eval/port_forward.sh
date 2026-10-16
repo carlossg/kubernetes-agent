@@ -24,6 +24,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "Starting port-forwards in namespace $NS:"
+forward gemma-4-e4b-server    8000
 forward gemma-4-26b-q3-server 8001
 forward gemma-4-26b-server    8002
 forward gemma-4-26b-q5-server 8003

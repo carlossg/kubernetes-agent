@@ -1,4 +1,4 @@
-"""Tool-calling eval for Gemma 4 quantization variants.
+"""Tool-calling eval for model variants.
 
 Sibling to run_eval.py: rather than judging final-answer JSON quality, this
 harness checks whether each variant emits the right tool call(s) with the
@@ -18,14 +18,16 @@ equal to the reference (useful when more than one tool would correctly
 answer the prompt).
 
 Usage:
-  ./port_forward.sh                              # in another shell
+  export GOOGLE_API_KEY=...          # for gemini-3-flash-preview
+  ./port_forward.sh &                # for local vLLM variants
   python run_tool_eval.py --project YOUR_GCP --location us-central1
-  python run_tool_eval.py --project YOUR_GCP --skip-vertex
+  python run_tool_eval.py --skip-vertex --variants gemini-3-flash-preview,gemma-4-e4b-it
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,9 +47,19 @@ class Variant:
     alias: str
     served_model_name: str
     base_url: str
+    api_key: str = "not-needed"
 
 
 VARIANTS: tuple[Variant, ...] = (
+    # Actively-deployed models (primary comparison)
+    Variant("gemini-3-flash-preview",
+            os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview"),
+            os.environ.get("GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta/openai"),
+            api_key=os.environ.get("GOOGLE_API_KEY", "")),
+    Variant("gemma-4-e4b-it", "gemma-4-e4b-it",
+            os.environ.get("VLLM_API_BASE", "http://localhost:8000") + "/v1",
+            api_key=os.environ.get("VLLM_API_KEY", "not-needed")),
+    # Gemma 4 26B quantization variants (port-forward via port_forward.sh)
     Variant("gemma-4-26b-q3", "gemma-4-26b-a4b-it-q3", "http://localhost:8001/v1"),
     Variant("gemma-4-26b",    "gemma-4-26b-a4b-it",    "http://localhost:8002/v1"),
     Variant("gemma-4-26b-q5", "gemma-4-26b-a4b-it-q5", "http://localhost:8003/v1"),
@@ -100,7 +112,7 @@ def load_tools(path: Path) -> list[dict]:
 
 def call_variant(variant: Variant, prompt: str, tools: list[dict],
                  max_tokens: int = 512) -> tuple[list[dict], str]:
-    client = OpenAI(base_url=variant.base_url, api_key="not-needed", timeout=120)
+    client = OpenAI(base_url=variant.base_url, api_key=variant.api_key, timeout=120)
     chat = client.chat.completions.create(
         model=variant.served_model_name,
         messages=[{"role": "user", "content": prompt}],
@@ -226,7 +238,7 @@ def evaluate_with_vertex(variant: Variant, df: pd.DataFrame) -> dict[str, float]
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", default=None, help="GCP project for Vertex AI (required unless --skip-vertex)")
     p.add_argument("--location", default="us-central1")
     p.add_argument("--dataset", default=Path(__file__).with_name("tool_dataset.jsonl"), type=Path)
     p.add_argument("--tools", default=Path(__file__).with_name("tools_schema.json"), type=Path)
@@ -240,6 +252,8 @@ def main() -> None:
     tools = load_tools(args.tools)
 
     if not args.skip_vertex:
+        if not args.project:
+            raise SystemExit("--project is required unless --skip-vertex is set")
         vertexai.init(project=args.project, location=args.location)
 
     selected = {v.alias: v for v in VARIANTS}

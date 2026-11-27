@@ -86,7 +86,7 @@ class GitHubRemediationIntegrationTest {
 	@Test
 	void createRollbackIssue_addsJulesLabel() throws IOException {
 		ModelAnalysisResult result = new ModelAnalysisResult();
-		result.setModelName("gemini-3-flash-preview");
+		result.setModelName("gemini-4-hydrogen");
 		result.setAnalysis("Test analysis: canary failing on db connection refused");
 		result.setRootCause("DB host misconfigured to localhost");
 		result.setRemediation("Point DB_HOST to the cluster service");

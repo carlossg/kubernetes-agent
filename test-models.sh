@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Model map: alias -> "MODEL_NAME SERVICE PORT" (SERVICE=NONE for Gemini)
 get_model_info() {
 	case "$1" in
-		gemini)     echo "gemini-2.5-flash NONE NONE" ;;
+		gemini)     echo "gemini-4-hydrogen NONE NONE" ;;
 		gemma-1b)   echo "gemma-3-1b-it gemma-1b-server 8000" ;;
 		gemma-9b)   echo "gemma-2-9b-it gemma-9b-server 8000" ;;
 		gemma-4-26b) echo "gemma-4-26b-a4b-it gemma-4-26b-server 8000" ;;
@@ -71,7 +71,7 @@ done
 # Resolve model list: from -m/positional or interactive
 if [ -z "$MODELS_STR" ]; then
 	echo "Select models to test (comma-separated or space-separated):"
-	echo "  gemini       - Gemini 2.5 Flash (cloud)"
+	echo "  gemini       - Gemini 4 Hydrogen (cloud)"
 	echo "  gemma-1b     - Gemma 3 1B (vLLM)"
 	echo "  gemma-9b     - Gemma 2 9B (vLLM)"
 	echo "  gemma-4-26b  - Gemma 4 26B A4B Q4_K_M GGUF (vLLM)"

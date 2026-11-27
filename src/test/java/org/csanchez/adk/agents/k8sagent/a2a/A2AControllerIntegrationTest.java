@@ -78,7 +78,7 @@ class A2AControllerIntegrationTest {
 		
 		// Create test agent with mock tools
 		BaseAgent testAgent = LlmAgent.builder()
-			.model("gemini-3-flash-preview")
+			.model("gemini-4-hydrogen")
 			.name("KubernetesAgent")
 			.description("Test agent for integration tests")
 			.instruction("""

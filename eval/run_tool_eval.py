@@ -48,6 +48,8 @@ class Variant:
     served_model_name: str
     base_url: str
     api_key: str = "not-needed"
+    max_tokens: int = 512
+    reasoning_effort: str | None = None
 
 
 VARIANTS: tuple[Variant, ...] = (
@@ -55,11 +57,14 @@ VARIANTS: tuple[Variant, ...] = (
     Variant("gemini-4-hydrogen",
             os.environ.get("GEMINI_MODEL", "gemini-4-hydrogen"),
             os.environ.get("GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta/openai"),
-            api_key=os.environ.get("GOOGLE_API_KEY", "")),
+            api_key=os.environ.get("GOOGLE_API_KEY", ""),
+            max_tokens=8192,
+            reasoning_effort=os.environ.get("GEMINI_REASONING_EFFORT") or None),
     Variant("gemma-4-e4b-it", "gemma-4-e4b-it",
             os.environ.get("VLLM_API_BASE", "http://localhost:8000") + "/v1",
             api_key=os.environ.get("VLLM_API_KEY", "not-needed")),
-    # Gemma 4 26B quantization variants (port-forward via port_forward.sh)
+    # Gemma 4 26B quantization variants (port-forward via port_forward.sh;
+    # keep default 512-token budget so 1536-ctx variants like q6 don't overflow)
     Variant("gemma-4-26b-q3", "gemma-4-26b-a4b-it-q3", "http://localhost:8001/v1"),
     Variant("gemma-4-26b",    "gemma-4-26b-a4b-it",    "http://localhost:8002/v1"),
     Variant("gemma-4-26b-q5", "gemma-4-26b-a4b-it-q5", "http://localhost:8003/v1"),
@@ -111,17 +116,32 @@ def load_tools(path: Path) -> list[dict]:
 
 
 def call_variant(variant: Variant, prompt: str, tools: list[dict],
-                 max_tokens: int = 512) -> tuple[list[dict], str]:
+                 max_tokens: int | None = None,
+                 reasoning_effort: str | None = None) -> tuple[list[dict], str]:
+    """Send a tool-calling prompt to the variant endpoint and return (tool_calls, fallback_text)."""
     client = OpenAI(base_url=variant.base_url, api_key=variant.api_key, timeout=120)
+    token_budget = variant.max_tokens if max_tokens is None else max_tokens
+    effort = variant.reasoning_effort if reasoning_effort is None else reasoning_effort
+    extra_kwargs: dict[str, str] = {}
+    if effort is not None:
+        extra_kwargs["reasoning_effort"] = effort
     chat = client.chat.completions.create(
         model=variant.served_model_name,
         messages=[{"role": "user", "content": prompt}],
         tools=tools,
         tool_choice="auto",
-        max_tokens=max_tokens,
+        max_tokens=token_budget,
         temperature=0.0,
+        **extra_kwargs,
     )
-    msg = chat.choices[0].message
+    if not chat.choices:
+        raise RuntimeError("empty choices in chat completion response")
+    choice = chat.choices[0]
+    if choice.finish_reason == "length":
+        raise RuntimeError(
+            f"response truncated (finish_reason={choice.finish_reason!r}, max_tokens={token_budget})"
+        )
+    msg = choice.message
     calls: list[dict] = []
     for tc in (msg.tool_calls or []):
         try:
@@ -172,12 +192,13 @@ def compare_call(actual: dict, reference: dict, required_keys: set[str]) -> dict
     }
 
 
-def computed_metrics(df: pd.DataFrame) -> dict[str, float]:
+def computed_metrics(df: pd.DataFrame) -> dict[str, float | int]:
     if df.empty:
         return {}
+    error_count = int((df["error"] != "").sum())
     rows = df[df["error"] == ""]
     if rows.empty:
-        return {"tool_call_emitted": 0.0}
+        return {"tool_call_emitted": 0.0, "errors": error_count}
     total = len(rows)
     emitted = sum(1 for c in rows["actual_tool_calls"] if c)
     count_match = 0
@@ -214,6 +235,7 @@ def computed_metrics(df: pd.DataFrame) -> dict[str, float]:
         "tool_param_kv_match": round(sum(kv_scores) / len(kv_scores), 3) if kv_scores else 0.0,
         "tool_call_full_match": full_match / total,
         "avg_latency_s": round(rows["latency_s"].mean(), 3),
+        "errors": error_count,
     }
 
 

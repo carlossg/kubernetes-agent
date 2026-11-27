@@ -21,7 +21,7 @@ import argparse
 import json
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
@@ -41,6 +41,8 @@ class Variant:
     served_model_name: str
     base_url: str
     api_key: str = "not-needed"
+    max_tokens: int = 1024
+    reasoning_effort: str | None = None
 
 
 VARIANTS: tuple[Variant, ...] = (
@@ -48,11 +50,14 @@ VARIANTS: tuple[Variant, ...] = (
     Variant("gemini-4-hydrogen",
             os.environ.get("GEMINI_MODEL", "gemini-4-hydrogen"),
             os.environ.get("GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta/openai"),
-            api_key=os.environ.get("GOOGLE_API_KEY", "")),
+            api_key=os.environ.get("GOOGLE_API_KEY", ""),
+            max_tokens=8192,
+            reasoning_effort=os.environ.get("GEMINI_REASONING_EFFORT") or None),
     Variant("gemma-4-e4b-it", "gemma-4-e4b-it",
             os.environ.get("VLLM_API_BASE", "http://localhost:8000") + "/v1",
             api_key=os.environ.get("VLLM_API_KEY", "not-needed")),
-    # Gemma 4 26B quantization variants (port-forward via port_forward.sh)
+    # Gemma 4 26B quantization variants (port-forward via port_forward.sh;
+    # keep default 1024-token budget so 1536-ctx variants like q6 don't overflow)
     Variant("gemma-4-26b-q3", "gemma-4-26b-a4b-it-q3", "http://localhost:8001/v1"),
     Variant("gemma-4-26b",    "gemma-4-26b-a4b-it",    "http://localhost:8002/v1"),
     Variant("gemma-4-26b-q5", "gemma-4-26b-a4b-it-q5", "http://localhost:8003/v1"),
@@ -102,15 +107,30 @@ def load_dataset(path: Path) -> pd.DataFrame:
     return df
 
 
-def call_variant(variant: Variant, prompt: str, max_tokens: int = 1024) -> str:
+def call_variant(variant: Variant, prompt: str, max_tokens: int | None = None,
+                 reasoning_effort: str | None = None) -> str:
+    """Send a prompt to the variant endpoint and return the completion text."""
     client = OpenAI(base_url=variant.base_url, api_key=variant.api_key, timeout=120)
+    token_budget = variant.max_tokens if max_tokens is None else max_tokens
+    effort = variant.reasoning_effort if reasoning_effort is None else reasoning_effort
+    extra_kwargs: dict[str, str] = {}
+    if effort is not None:
+        extra_kwargs["reasoning_effort"] = effort
     chat = client.chat.completions.create(
         model=variant.served_model_name,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=max_tokens,
+        max_tokens=token_budget,
         temperature=0.0,
+        **extra_kwargs,
     )
-    return chat.choices[0].message.content or ""
+    if not chat.choices:
+        raise RuntimeError("empty choices in chat completion response")
+    choice = chat.choices[0]
+    if choice.finish_reason == "length":
+        raise RuntimeError(
+            f"response truncated (finish_reason={choice.finish_reason!r}, max_tokens={token_budget})"
+        )
+    return choice.message.content or ""
 
 
 def collect_responses(variant: Variant, df: pd.DataFrame) -> pd.DataFrame:
@@ -148,10 +168,18 @@ def parse_reference_promote(reference: str) -> bool:
     return bool(json.loads(reference)["promote"])
 
 
-def computed_metrics(df: pd.DataFrame) -> dict[str, float]:
+def computed_metrics(df: pd.DataFrame) -> dict[str, float | int]:
+    if df.empty:
+        return {}
+    error_count = int((df["error"] != "").sum())
     valid = df[df["error"] == ""]
     if valid.empty:
-        return {"promote_accuracy": 0.0, "json_validity": 0.0, "avg_latency_s": float("nan")}
+        return {
+            "promote_accuracy": 0.0,
+            "json_validity": 0.0,
+            "avg_latency_s": float("nan"),
+            "errors": error_count,
+        }
     promote_correct = sum(
         parse_promote(r["response"]) == parse_reference_promote(r["reference"])
         for _, r in valid.iterrows()
@@ -161,6 +189,7 @@ def computed_metrics(df: pd.DataFrame) -> dict[str, float]:
         "promote_accuracy": promote_correct / len(valid),
         "json_validity": json_valid / len(valid),
         "avg_latency_s": round(valid["latency_s"].mean(), 3),
+        "errors": error_count,
     }
 
 

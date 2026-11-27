@@ -67,8 +67,9 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 
-# For gemini-4-hydrogen
+# For gemini-4-hydrogen (ensure GEMINI_MODEL isn't still set to an older model)
 export GOOGLE_API_KEY=...
+export GEMINI_MODEL=gemini-4-hydrogen
 
 # GCP auth for Vertex AI judges (not needed with --skip-vertex)
 gcloud auth application-default login
@@ -83,8 +84,8 @@ kubectl get svc -n gemma-system
 
 ```bash
 kubectl port-forward -n gemma-system svc/gemma-4-e4b-server 8000:8000 &
-python run_eval.py      --skip-vertex --variants gemini-4-hydrogen,gemma-4-e4b-it
-python run_tool_eval.py --skip-vertex --variants gemini-4-hydrogen,gemma-4-e4b-it
+GEMINI_MODEL=gemini-4-hydrogen python run_eval.py      --skip-vertex --variants gemini-4-hydrogen,gemma-4-e4b-it
+GEMINI_MODEL=gemini-4-hydrogen python run_tool_eval.py --skip-vertex --variants gemini-4-hydrogen,gemma-4-e4b-it
 ```
 
 ### All variants with Vertex AI judges

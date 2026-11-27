@@ -71,7 +71,7 @@ done
 # Resolve model list: from -m/positional or interactive
 if [ -z "$MODELS_STR" ]; then
 	echo "Select models to test (comma-separated or space-separated):"
-	echo "  gemini       - Gemini 2.5 Flash (cloud)"
+	echo "  gemini       - Gemini 4 Hydrogen (cloud)"
 	echo "  gemma-1b     - Gemma 3 1B (vLLM)"
 	echo "  gemma-9b     - Gemma 2 9B (vLLM)"
 	echo "  gemma-4-26b  - Gemma 4 26B A4B Q4_K_M GGUF (vLLM)"

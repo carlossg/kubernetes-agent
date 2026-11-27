@@ -113,15 +113,13 @@ def call_variant(variant: Variant, prompt: str, max_tokens: int | None = None,
     client = OpenAI(base_url=variant.base_url, api_key=variant.api_key, timeout=120)
     token_budget = variant.max_tokens if max_tokens is None else max_tokens
     effort = variant.reasoning_effort if reasoning_effort is None else reasoning_effort
-    extra_kwargs: dict[str, str] = {}
-    if effort is not None:
-        extra_kwargs["reasoning_effort"] = effort
+    extra_body = {"reasoning_effort": effort} if effort is not None else None
     chat = client.chat.completions.create(
         model=variant.served_model_name,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=token_budget,
         temperature=0.0,
-        **extra_kwargs,
+        extra_body=extra_body,
     )
     if not chat.choices:
         raise RuntimeError("empty choices in chat completion response")

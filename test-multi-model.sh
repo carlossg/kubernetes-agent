@@ -52,8 +52,8 @@ echo ""
 echo "--- Running Kubernetes Agent with Multi-Model Configuration ---"
 # Set environment variables for multi-model configuration
 export ENABLE_MULTI_MODEL="true"
-export MODELS_TO_USE="gemini-2.5-flash,gemma-3-1b-it,gemma-3-27b-it"
-export GEMINI_MODEL="gemini-2.5-flash"
+export MODELS_TO_USE="gemini-4-hydrogen,gemma-3-1b-it,gemma-3-27b-it"
+export GEMINI_MODEL="gemini-4-hydrogen"
 # Configure multiple vLLM models
 export VLLM_MODELS="gemma-3-1b-it,gemma-3-27b-it"
 export VLLM_API_BASE_GEMMA_3_1B_IT="http://localhost:${PF_1B_PORT}"

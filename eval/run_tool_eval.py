@@ -18,10 +18,10 @@ equal to the reference (useful when more than one tool would correctly
 answer the prompt).
 
 Usage:
-  export GOOGLE_API_KEY=...          # for gemini-3-flash-preview
+  export GOOGLE_API_KEY=...          # for gemini-4-hydrogen
   ./port_forward.sh &                # for local vLLM variants
   python run_tool_eval.py --project YOUR_GCP --location us-central1
-  python run_tool_eval.py --skip-vertex --variants gemini-3-flash-preview,gemma-4-e4b-it
+  python run_tool_eval.py --skip-vertex --variants gemini-4-hydrogen,gemma-4-e4b-it
 """
 from __future__ import annotations
 
@@ -52,8 +52,8 @@ class Variant:
 
 VARIANTS: tuple[Variant, ...] = (
     # Actively-deployed models (primary comparison)
-    Variant("gemini-3-flash-preview",
-            os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview"),
+    Variant("gemini-4-hydrogen",
+            os.environ.get("GEMINI_MODEL", "gemini-4-hydrogen"),
             os.environ.get("GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta/openai"),
             api_key=os.environ.get("GOOGLE_API_KEY", "")),
     Variant("gemma-4-e4b-it", "gemma-4-e4b-it",

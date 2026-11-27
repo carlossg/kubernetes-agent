@@ -6,7 +6,7 @@ Covered variants (select via `--variants`):
 
 | Alias | Model | Endpoint |
 |---|---|---|
-| `gemini-4-hydrogen` | Gemini 3 Flash Preview | Google AI API (needs `GOOGLE_API_KEY`) |
+| `gemini-4-hydrogen` | Gemini 4 Hydrogen | Google AI API (needs `GOOGLE_API_KEY`) |
 | `gemma-4-e4b-it` | Gemma 4 E4B (in-cluster vLLM) | `localhost:8000` or `$VLLM_API_BASE` |
 | `gemma-4-26b-q3` | Gemma 4 26B Q3_K_M | `localhost:8001` |
 | `gemma-4-26b` | Gemma 4 26B (fp16) | `localhost:8002` |
